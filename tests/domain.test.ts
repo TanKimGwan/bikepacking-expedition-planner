@@ -109,6 +109,18 @@ describe('planning domain', () => {
     ).toThrow('implausible elevation')
   })
 
+  it('accepts the configured normal elevation boundaries', () => {
+    const route = normalizeRoute({
+      coordinates: [
+        [0, 0, -1_000],
+        [0, 1, 10_000],
+      ],
+    })
+
+    expect(route.ascentMeters).toBeCloseTo(11_000)
+    expect(route.descentMeters).toBe(0)
+  })
+
   it('reconciles stage ascent and descent with the full elevation sequence', () => {
     const route = normalizeRoute(
       {

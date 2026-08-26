@@ -77,6 +77,9 @@ type RouteResult = {
   coordinateCount?: number
   elevationAvailable?: boolean
   elevationPlausible?: boolean
+  maxElevationDeltaMeters?: number
+  maxElevationDeltaHorizontalDistanceMeters?: number
+  suspiciousElevationJumpCount?: number
   routeRatio?: number
   errorCode?: string
   normalizedRoute?: NormalizedRoute
@@ -147,17 +150,68 @@ function errorCode(error: unknown): string {
   return error instanceof DOMException && error.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK_ERROR'
 }
 
+function elevationDiagnostics(coordinates: readonly number[][]): {
+  maxElevationDeltaMeters?: number
+  maxElevationDeltaHorizontalDistanceMeters?: number
+  suspiciousElevationJumpCount: number
+} {
+  let maxElevationDeltaMeters: number | undefined
+  let maxElevationDeltaHorizontalDistanceMeters: number | undefined
+  let suspiciousElevationJumpCount = 0
+
+  for (let index = 1; index < coordinates.length; index += 1) {
+    const [fromLng, fromLat, fromElevation] = coordinates[index - 1]
+    const [toLng, toLat, toElevation] = coordinates[index]
+    if (
+      !Number.isFinite(fromElevation) ||
+      !Number.isFinite(toElevation) ||
+      !Number.isFinite(fromLng) ||
+      !Number.isFinite(fromLat) ||
+      !Number.isFinite(toLng) ||
+      !Number.isFinite(toLat)
+    ) {
+      continue
+    }
+
+    const horizontalDistanceMeters = haversineMeters([fromLng, fromLat], [toLng, toLat])
+    const elevationDeltaMeters = Math.abs(toElevation - fromElevation)
+    if (maxElevationDeltaMeters === undefined || elevationDeltaMeters > maxElevationDeltaMeters) {
+      maxElevationDeltaMeters = elevationDeltaMeters
+      maxElevationDeltaHorizontalDistanceMeters = horizontalDistanceMeters
+    }
+    if (horizontalDistanceMeters < 100 && elevationDeltaMeters > 100) {
+      suspiciousElevationJumpCount += 1
+    }
+  }
+
+  return {
+    maxElevationDeltaMeters:
+      maxElevationDeltaMeters === undefined
+        ? undefined
+        : Number(maxElevationDeltaMeters.toFixed(1)),
+    maxElevationDeltaHorizontalDistanceMeters:
+      maxElevationDeltaHorizontalDistanceMeters === undefined
+        ? undefined
+        : Number(maxElevationDeltaHorizontalDistanceMeters.toFixed(1)),
+    suspiciousElevationJumpCount,
+  }
+}
+
 async function runOrsRoute(
   provider: OrsRoutingProvider,
   route: RouteCase,
   routeProfile: RouteProfile,
 ): Promise<RouteResult> {
   const startedAt = performance.now()
+  let diagnostics: ReturnType<typeof elevationDiagnostics> = {
+    suspiciousElevationJumpCount: 0,
+  }
   try {
     const providerRoute: ProviderRoute = await provider.route(
       inputFor(route, routeProfile),
       context(),
     )
+    diagnostics = elevationDiagnostics(providerRoute.coordinates)
     const normalizedRoute = normalizeRoute(providerRoute)
     return {
       provider: 'openrouteservice',
@@ -173,6 +227,7 @@ async function runOrsRoute(
         (point) => point.length >= 3 && Number.isFinite(point[2]),
       ),
       elevationPlausible: true,
+      ...diagnostics,
       routeRatio: Number(
         (normalizedRoute.distanceMeters / haversineMeters(route.start, route.end)).toFixed(2),
       ),
@@ -187,6 +242,7 @@ async function runOrsRoute(
       latencyMs: Math.round(performance.now() - startedAt),
       errorCode: errorCode(error),
       elevationPlausible: error instanceof PlanningDomainError ? false : undefined,
+      ...diagnostics,
     }
   }
 }
@@ -326,6 +382,9 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'coordinateCount',
     'elevationAvailable',
     'elevationPlausible',
+    'maxElevationDeltaMeters',
+    'maxElevationDeltaHorizontalDistanceMeters',
+    'suspiciousElevationJumpCount',
     'routeRatio',
     'errorCode',
   ])
