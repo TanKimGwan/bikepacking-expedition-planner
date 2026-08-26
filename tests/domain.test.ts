@@ -45,6 +45,70 @@ describe('planning domain', () => {
     expect(route.descentMeters).toBeCloseTo(50)
   })
 
+  it('rejects provider elevation sentinel values', () => {
+    expect(() =>
+      normalizeRoute({
+        coordinates: [
+          [0, 0, 10],
+          [0, 0.01, -32768],
+          [0, 0.02, 20],
+        ],
+      }),
+    ).toThrow('implausible elevation')
+  })
+
+  it('rejects positive and negative short-distance elevation spikes', () => {
+    for (const spike of [150, -150]) {
+      expect(() =>
+        normalizeRoute({
+          coordinates: [
+            [0, 0, 0],
+            [0, 0.0005, spike],
+            [0, 0.001, 0],
+          ],
+        }),
+      ).toThrow('implausible elevation')
+    }
+  })
+
+  it('rejects repeated short-distance elevation spikes', () => {
+    expect(() =>
+      normalizeRoute({
+        coordinates: [
+          [0, 0, 0],
+          [0, 0.0005, 150],
+          [0, 0.001, 0],
+          [0, 0.0015, 150],
+          [0, 0.002, 0],
+        ],
+      }),
+    ).toThrow('implausible elevation')
+  })
+
+  it('accepts a steep climb spread over a plausible horizontal distance', () => {
+    const route = normalizeRoute({
+      coordinates: [
+        [0, 0, 0],
+        [0, 0.005, 200],
+        [0, 0.01, 100],
+      ],
+    })
+
+    expect(route.ascentMeters).toBeCloseTo(200)
+    expect(route.descentMeters).toBeCloseTo(100)
+  })
+
+  it('rejects elevation outside a broad terrestrial range', () => {
+    expect(() =>
+      normalizeRoute({
+        coordinates: [
+          [0, 0, 0],
+          [0, 0.01, 10_001],
+        ],
+      }),
+    ).toThrow('implausible elevation')
+  })
+
   it('reconciles stage ascent and descent with the full elevation sequence', () => {
     const route = normalizeRoute(
       {
@@ -129,7 +193,6 @@ describe('planning domain', () => {
     const cases: Array<[PresetId, number]> = [
       ['sf-santa-cruz', 2],
       ['amsterdam-brussels', 5],
-      ['bandung-pangandaran', 6],
     ]
 
     for (const [presetId, days] of cases) {
@@ -155,6 +218,15 @@ describe('planning domain', () => {
         6,
       )
     }
+  })
+
+  it('does not expose a cached route with implausible elevation', () => {
+    const planInput = ExpeditionInputSchema.parse({
+      ...PRESETS['bandung-pangandaran'].input,
+      days: 6,
+    })
+
+    expect(cachedPlanFor(planInput)).toBeNull()
   })
 })
 

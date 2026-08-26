@@ -12,6 +12,11 @@ import { GraphHopperGeocodingProvider } from '../../src/server/integrations/grap
 import { OrsRoutingProvider } from '../../src/server/integrations/ors-routing'
 import { OverpassSettlementProvider } from '../../src/server/integrations/overpass-settlements'
 import type { ExecutionContext } from '../../src/server/network'
+import {
+  formatProviderValidationStatus,
+  providerValidationExitCode,
+  summarizeProviderValidation,
+} from './status'
 
 const ROUTES = [
   {
@@ -71,6 +76,7 @@ type RouteResult = {
   descentMeters?: number
   coordinateCount?: number
   elevationAvailable?: boolean
+  elevationPlausible?: boolean
   routeRatio?: number
   errorCode?: string
   normalizedRoute?: NormalizedRoute
@@ -136,7 +142,8 @@ function inputFor(route: RouteCase, routeProfile: RouteProfile): ExpeditionInput
 }
 
 function errorCode(error: unknown): string {
-  if (error instanceof ApplicationError || error instanceof PlanningDomainError) return error.code
+  if (error instanceof PlanningDomainError) return 'PROVIDER_RESPONSE_INVALID'
+  if (error instanceof ApplicationError) return error.code
   return error instanceof DOMException && error.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK_ERROR'
 }
 
@@ -165,6 +172,7 @@ async function runOrsRoute(
       elevationAvailable: normalizedRoute.geometry.coordinates.some(
         (point) => point.length >= 3 && Number.isFinite(point[2]),
       ),
+      elevationPlausible: true,
       routeRatio: Number(
         (normalizedRoute.distanceMeters / haversineMeters(route.start, route.end)).toFixed(2),
       ),
@@ -178,6 +186,7 @@ async function runOrsRoute(
       success: false,
       latencyMs: Math.round(performance.now() - startedAt),
       errorCode: errorCode(error),
+      elevationPlausible: error instanceof PlanningDomainError ? false : undefined,
     }
   }
 }
@@ -316,6 +325,7 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'descentMeters',
     'coordinateCount',
     'elevationAvailable',
+    'elevationPlausible',
     'routeRatio',
     'errorCode',
   ])
@@ -337,12 +347,44 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'errorCode',
   ])
 
+  const summary = summarizeProviderValidation(
+    routeResults,
+    geocodeResults,
+    settlementResults,
+    ROUTES.length * PRODUCTION_PROFILES.length,
+    ROUTES.length,
+    routeResults.filter((result) => result.success).length,
+  )
+  const coreSummary = summarizeProviderValidation(
+    routeResults,
+    geocodeResults,
+    [],
+    ROUTES.length * PRODUCTION_PROFILES.length,
+    ROUTES.length,
+    0,
+  )
+  const corridorSummary = summarizeProviderValidation(
+    routeResults.map(() => ({ success: true })),
+    geocodeResults.map(() => ({ success: true })),
+    settlementResults,
+    routeResults.length,
+    geocodeResults.length,
+    routeResults.filter((result) => result.success).length,
+  )
+  console.log(`\nCore provider status: ${formatProviderValidationStatus(coreSummary)}`)
+  console.log(`Settlement corridor status: ${formatProviderValidationStatus(corridorSummary)}`)
+  const status = formatProviderValidationStatus(summary)
+  console.log(`\nProvider validation status: ${status}`)
+
   await fs.mkdir('artifacts/provider-validation', { recursive: true })
   await fs.writeFile(
     'artifacts/provider-validation/latest.json',
     `${JSON.stringify(
       {
         generatedAt: new Date().toISOString(),
+        status: summary,
+        coreStatus: coreSummary,
+        settlementStatus: corridorSummary,
         routeResults: routeResults.map(({ normalizedRoute, ...result }) => result),
         geocodeResults,
         settlementResults,
@@ -351,4 +393,5 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
       2,
     )}\n`,
   )
+  process.exitCode = providerValidationExitCode(summary.status)
 }

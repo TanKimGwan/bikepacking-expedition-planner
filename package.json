@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "node scripts/test-e2e.mjs",
     "provider:validate": "vite-node --config vite.config.ts scripts/provider-validation/run.ts"
   },
   "dependencies": {

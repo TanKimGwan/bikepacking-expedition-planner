@@ -17,6 +17,12 @@ export const SETTLEMENT_CORRIDOR_METERS = 2_000
 /** Stage elevation totals may differ from the route aggregate by at most 0.1 m. */
 export const ELEVATION_RECONCILIATION_TOLERANCE_METERS = 0.1
 const MAX_SETTLEMENT_TARGET_DEVIATION_METERS = 25_000
+const MIN_PLAUSIBLE_ELEVATION_METERS = -1_000
+const MAX_PLAUSIBLE_ELEVATION_METERS = 10_000
+// ponytail: conservative route-data gate; replace with provider quality metadata when available.
+const SHORT_ELEVATION_SPIKE_DISTANCE_METERS = 100
+const SHORT_ELEVATION_SPIKE_DELTA_METERS = 100
+const PROVIDER_ELEVATION_SENTINELS = new Set([-32_768])
 
 export class PlanningDomainError extends Error {
   constructor(
@@ -70,6 +76,8 @@ export function normalizeRoute(
     }
     allPoints.push({ lng, lat, elevationMeters, distanceFromStartMeters })
   }
+
+  validateElevationPlausibility(allPoints)
 
   const sampledPoints = [allPoints[0]]
   let nextSampleDistance = sampleIntervalMeters
@@ -216,6 +224,40 @@ function calculateElevation(points: RoutePoint[]): {
     if (delta < 0) descentMeters -= delta
   }
   return { hasElevation, ascentMeters, descentMeters }
+}
+
+function validateElevationPlausibility(points: RoutePoint[]): void {
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index]
+    const elevation = point.elevationMeters
+    if (elevation === undefined) continue
+    if (
+      PROVIDER_ELEVATION_SENTINELS.has(elevation) ||
+      elevation < MIN_PLAUSIBLE_ELEVATION_METERS ||
+      elevation > MAX_PLAUSIBLE_ELEVATION_METERS
+    ) {
+      throw new PlanningDomainError(
+        'INVALID_INPUT',
+        'The routing provider returned implausible elevation data.',
+      )
+    }
+
+    const previous = points[index - 1]?.elevationMeters
+    if (previous === undefined) continue
+    const horizontalDistance = haversineMeters(
+      [points[index - 1].lng, points[index - 1].lat],
+      [point.lng, point.lat],
+    )
+    if (
+      horizontalDistance < SHORT_ELEVATION_SPIKE_DISTANCE_METERS &&
+      Math.abs(elevation - previous) > SHORT_ELEVATION_SPIKE_DELTA_METERS
+    ) {
+      throw new PlanningDomainError(
+        'INVALID_INPUT',
+        'The routing provider returned implausible elevation data.',
+      )
+    }
+  }
 }
 
 function stageElevation(

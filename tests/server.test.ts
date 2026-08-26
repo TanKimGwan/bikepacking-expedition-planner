@@ -112,6 +112,26 @@ describe('PlanExpeditionUseCase', () => {
     expect(settlementProvider.findAlongRoute).not.toHaveBeenCalled()
   })
 
+  it('maps implausible route elevation to PROVIDER_RESPONSE_INVALID', async () => {
+    const useCase = new PlanExpeditionUseCase(
+      {
+        route: vi.fn().mockResolvedValue({
+          coordinates: [
+            [0, 0, 0],
+            [0, 0.0005, 150],
+            [0, 0.2, 0],
+          ],
+        }),
+      },
+      { findAlongRoute: vi.fn() },
+      provenance,
+    )
+
+    await expect(useCase.execute(input, context)).rejects.toMatchObject({
+      code: 'PROVIDER_RESPONSE_INVALID',
+    })
+  })
+
   it('preserves settlement transport failures as explicit errors', async () => {
     const useCase = new PlanExpeditionUseCase(
       {

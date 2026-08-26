@@ -6,7 +6,7 @@ import {
   type ExpeditionPlan,
 } from '@shared/contracts/expedition'
 import { haversineMeters } from '@shared/domain/geo'
-import { buildExpeditionPlan, normalizeRoute } from '@shared/domain/planning'
+import { buildExpeditionPlan, normalizeRoute, PlanningDomainError } from '@shared/domain/planning'
 
 const CURATED_ROUTES = [
   { start: [37.7749, -122.4194], destination: [36.9741, -122.0308] },
@@ -43,35 +43,40 @@ export function cachedPlanFor(input: ExpeditionInput): ExpeditionPlan | null {
         ) < 3_000,
     )
   if (!parsed?.success) return null
-  const template = parsed.data
-  const route = normalizeRoute({
-    coordinates: template.route.geometry.coordinates,
-    ascentMeters: template.route.ascentMeters,
-    descentMeters: template.route.descentMeters,
-  })
-  const replanned = buildExpeditionPlan(
-    input,
-    route,
-    template.stages
-      .slice(0, -1)
-      .map((stage) =>
-        stage.end.id.startsWith('route-point:')
-          ? { ...stage.end, label: `Balanced route point for day ${stage.day}` }
-          : stage.end,
-      ),
-    { ...template.provenance, source: 'cached' },
-  )
-  return {
-    ...replanned,
-    warnings: [
-      ...replanned.warnings,
-      {
-        code: 'CACHED_DEMO_FALLBACK',
-        severity: 'info',
-        title: 'Showing the curated route backup',
-        message:
-          'Live route services were unavailable, so this known demo route is using a cached result created by the live planning pipeline.',
-      },
-    ],
+  try {
+    const template = parsed.data
+    const route = normalizeRoute({
+      coordinates: template.route.geometry.coordinates,
+      ascentMeters: template.route.ascentMeters,
+      descentMeters: template.route.descentMeters,
+    })
+    const replanned = buildExpeditionPlan(
+      input,
+      route,
+      template.stages
+        .slice(0, -1)
+        .map((stage) =>
+          stage.end.id.startsWith('route-point:')
+            ? { ...stage.end, label: `Balanced route point for day ${stage.day}` }
+            : stage.end,
+        ),
+      { ...template.provenance, source: 'cached' },
+    )
+    return {
+      ...replanned,
+      warnings: [
+        ...replanned.warnings,
+        {
+          code: 'CACHED_DEMO_FALLBACK',
+          severity: 'info',
+          title: 'Showing the curated route backup',
+          message:
+            'Live route services were unavailable, so this known demo route is using a cached result created by the live planning pipeline.',
+        },
+      ],
+    }
+  } catch (error) {
+    if (error instanceof PlanningDomainError) return null
+    throw error
   }
 }
