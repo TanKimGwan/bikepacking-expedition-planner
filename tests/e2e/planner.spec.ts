@@ -1,6 +1,18 @@
 import { expect, test } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+
+const fallbackPlans = JSON.parse(
+  readFileSync(new URL('../../src/server/fallback-plans.json', import.meta.url), 'utf8'),
+) as unknown[]
 
 test('curated expedition hero flow reaches a usable plan', async ({ page }) => {
+  await page.route('**/api/plan', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(fallbackPlans[0]),
+    }),
+  )
   await page.goto('/planner?example=sf-santa-cruz')
   await expect(page.getByRole('heading', { name: /Plan the ride/i })).toBeVisible()
   await page.getByRole('button', { name: /Generate expedition/i }).click()
