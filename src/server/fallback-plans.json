@@ -4354,7 +4354,7 @@
         },
         "end": {
           "id": "route-point:37.17307,-122.36375",
-          "label": "Route point near day 1",
+          "label": "Balanced route point for day 2",
           "lat": 37.17306881567147,
           "lng": -122.36374750061321
         },
@@ -4485,7 +4485,7 @@
         "descentMeters": 358.70000000000005,
         "start": {
           "id": "route-point:37.17307,-122.36375",
-          "label": "Route point near day 1",
+          "label": "Balanced route point for day 2",
           "lat": 37.17306881567147,
           "lng": -122.36374750061321
         },
@@ -13058,7 +13058,7 @@
         },
         "end": {
           "id": "route-point:51.86875,4.90385",
-          "label": "Route point near day 0",
+          "label": "Balanced route point for day 1",
           "lat": 51.86874812997398,
           "lng": 4.903846022790846
         },
@@ -13355,7 +13355,7 @@
         "descentMeters": 196.8936777934659,
         "start": {
           "id": "route-point:51.86875,4.90385",
-          "label": "Route point near day 0",
+          "label": "Balanced route point for day 1",
           "lat": 51.86874812997398,
           "lng": 4.903846022790846
         },
@@ -22536,7 +22536,7 @@
         },
         "end": {
           "id": "route-point:-7.27522,108.02783",
-          "label": "Route point near day 1",
+          "label": "Balanced route point for day 2",
           "lat": -7.275223013051756,
           "lng": 108.02783325612525
         },
@@ -22714,7 +22714,7 @@
         "descentMeters": 4019.173711071802,
         "start": {
           "id": "route-point:-7.27522,108.02783",
-          "label": "Route point near day 1",
+          "label": "Balanced route point for day 2",
           "lat": -7.275223013051756,
           "lng": 108.02783325612525
         },

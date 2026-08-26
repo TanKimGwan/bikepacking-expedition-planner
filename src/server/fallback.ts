@@ -52,7 +52,13 @@ export function cachedPlanFor(input: ExpeditionInput): ExpeditionPlan | null {
   const replanned = buildExpeditionPlan(
     input,
     route,
-    template.stages.slice(0, -1).map((stage) => stage.end),
+    template.stages
+      .slice(0, -1)
+      .map((stage) =>
+        stage.end.id.startsWith('route-point:')
+          ? { ...stage.end, label: `Balanced route point for day ${stage.day}` }
+          : stage.end,
+      ),
     { ...template.provenance, source: 'cached' },
   )
   return {

@@ -143,6 +143,9 @@ describe('planning domain', () => {
       expect(plan?.route.geometry.coordinates[0]?.[1]).toBeCloseTo(planInput.start.lat, 3)
       expect(plan?.provenance.source).toBe('cached')
       if (!plan) throw new Error('Expected a curated fallback plan')
+      expect(plan.stages.every((stage) => !stage.end.label.startsWith('Route point near'))).toBe(
+        true,
+      )
       expect(plan.stages.reduce((total, stage) => total + stage.ascentMeters, 0)).toBeCloseTo(
         plan.route.ascentMeters,
         6,
