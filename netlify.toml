@@ -1,0 +1,43 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[dev]
+  command = "vite --host 0.0.0.0"
+  targetPort = 5173
+  port = 8888
+  framework = "vite"
+
+[[redirects]]
+  from = "/api/plan"
+  to = "/.netlify/functions/plan"
+  status = 200
+
+[[redirects]]
+  from = "/api/geocode/search"
+  to = "/.netlify/functions/geocode-search"
+  status = 200
+
+[[redirects]]
+  from = "/api/geocode/reverse"
+  to = "/.netlify/functions/geocode-reverse"
+  status = 200
+
+[[redirects]]
+  from = "/api/events"
+  to = "/.netlify/functions/events"
+  status = 200
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200
+
+[[headers]]
+for = "/*"
+
+[headers.values]
+Content-Security-Policy = "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' https://fonts.gstatic.com; frame-ancestors 'none'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com"
+Referrer-Policy = "strict-origin-when-cross-origin"
+X-Content-Type-Options = "nosniff"

@@ -1,0 +1,354 @@
+import fs from 'node:fs/promises'
+
+import type {
+  CanonicalLocation,
+  ExpeditionInput,
+  NormalizedRoute,
+} from '@shared/contracts/expedition'
+import { normalizeRoute, PlanningDomainError, type ProviderRoute } from '@shared/domain/planning'
+
+import { ApplicationError } from '../../src/server/errors'
+import { GraphHopperGeocodingProvider } from '../../src/server/integrations/graphhopper-geocoding'
+import { OrsRoutingProvider } from '../../src/server/integrations/ors-routing'
+import { OverpassSettlementProvider } from '../../src/server/integrations/overpass-settlements'
+import type { ExecutionContext } from '../../src/server/network'
+
+const ROUTES = [
+  {
+    id: 'sf-santa-cruz',
+    label: 'San Francisco -> Santa Cruz',
+    start: [-122.4194, 37.7749],
+    end: [-122.0308, 36.9741],
+  },
+  {
+    id: 'portland-eugene',
+    label: 'Portland -> Eugene',
+    start: [-122.6765, 45.5231],
+    end: [-123.0868, 44.0521],
+  },
+  {
+    id: 'amsterdam-brussels',
+    label: 'Amsterdam -> Brussels',
+    start: [4.9041, 52.3676],
+    end: [4.3517, 50.8503],
+  },
+  {
+    id: 'munich-salzburg',
+    label: 'Munich -> Salzburg',
+    start: [11.582, 48.1351],
+    end: [13.055, 47.8095],
+  },
+  {
+    id: 'bandung-pangandaran',
+    label: 'Bandung -> Pangandaran',
+    start: [107.6191, -6.9175],
+    end: [108.353, -7.6907],
+  },
+  {
+    id: 'yogyakarta-pacitan',
+    label: 'Yogyakarta -> Pacitan',
+    start: [110.3695, -7.7956],
+    end: [111.1077, -8.2016],
+  },
+] as const
+
+const PRODUCTION_PROFILES = [
+  { routeProfile: 'paved-priority', providerProfile: 'cycling-road' },
+  { routeProfile: 'mixed-surface', providerProfile: 'cycling-mountain' },
+] as const
+
+type RouteCase = (typeof ROUTES)[number]
+type RouteProfile = (typeof PRODUCTION_PROFILES)[number]['routeProfile']
+
+type RouteResult = {
+  provider: 'openrouteservice'
+  routeId: string
+  routeProfile: RouteProfile
+  success: boolean
+  latencyMs: number
+  distanceMeters?: number
+  ascentMeters?: number
+  descentMeters?: number
+  coordinateCount?: number
+  elevationAvailable?: boolean
+  routeRatio?: number
+  errorCode?: string
+  normalizedRoute?: NormalizedRoute
+}
+
+type GeocodeResult = {
+  provider: 'graphhopper'
+  query: string
+  success: boolean
+  count: number
+  latencyMs: number
+  errorCode?: string
+}
+
+type SettlementResult = {
+  provider: 'openstreetmap-overpass'
+  routeId: string
+  routeProfile: RouteProfile
+  success: boolean
+  normalizedCandidateCount: number
+  latencyMs: number
+  errorCode?: string
+}
+
+function loadEnv(text: string): Record<string, string> {
+  return Object.fromEntries(
+    text.split(/\r?\n/).flatMap((line) => {
+      const trimmed = line.trim()
+      if (!trimmed || trimmed.startsWith('#')) return []
+      const separator = trimmed.indexOf('=')
+      return separator === -1 ? [] : [[trimmed.slice(0, separator), trimmed.slice(separator + 1)]]
+    }),
+  )
+}
+
+function context(): ExecutionContext {
+  return {
+    requestId: crypto.randomUUID(),
+    signal: new AbortController().signal,
+    deadlineAt: Date.now() + 20_000,
+  }
+}
+
+function location(route: RouteCase, endpoint: 'start' | 'destination'): CanonicalLocation {
+  const coordinates = endpoint === 'start' ? route.start : route.end
+  return {
+    id: `validation:${route.id}:${endpoint}`,
+    label: endpoint === 'start' ? route.label.split(' -> ')[0] : route.label.split(' -> ')[1],
+    lng: coordinates[0],
+    lat: coordinates[1],
+  }
+}
+
+function inputFor(route: RouteCase, routeProfile: RouteProfile): ExpeditionInput {
+  return {
+    start: location(route, 'start'),
+    destination: location(route, 'destination'),
+    days: 3,
+    bikeType: 'gravel',
+    routeProfile,
+    fitness: 'intermediate',
+  }
+}
+
+function errorCode(error: unknown): string {
+  if (error instanceof ApplicationError || error instanceof PlanningDomainError) return error.code
+  return error instanceof DOMException && error.name === 'AbortError' ? 'TIMEOUT' : 'NETWORK_ERROR'
+}
+
+async function runOrsRoute(
+  provider: OrsRoutingProvider,
+  route: RouteCase,
+  routeProfile: RouteProfile,
+): Promise<RouteResult> {
+  const startedAt = performance.now()
+  try {
+    const providerRoute: ProviderRoute = await provider.route(
+      inputFor(route, routeProfile),
+      context(),
+    )
+    const normalizedRoute = normalizeRoute(providerRoute)
+    return {
+      provider: 'openrouteservice',
+      routeId: route.id,
+      routeProfile,
+      success: true,
+      latencyMs: Math.round(performance.now() - startedAt),
+      distanceMeters: Math.round(normalizedRoute.distanceMeters),
+      ascentMeters: Math.round(normalizedRoute.ascentMeters),
+      descentMeters: Math.round(normalizedRoute.descentMeters),
+      coordinateCount: normalizedRoute.geometry.coordinates.length,
+      elevationAvailable: normalizedRoute.geometry.coordinates.some(
+        (point) => point.length >= 3 && Number.isFinite(point[2]),
+      ),
+      routeRatio: Number(
+        (normalizedRoute.distanceMeters / haversineMeters(route.start, route.end)).toFixed(2),
+      ),
+      normalizedRoute,
+    }
+  } catch (error) {
+    return {
+      provider: 'openrouteservice',
+      routeId: route.id,
+      routeProfile,
+      success: false,
+      latencyMs: Math.round(performance.now() - startedAt),
+      errorCode: errorCode(error),
+    }
+  }
+}
+
+async function runGeocode(
+  provider: GraphHopperGeocodingProvider,
+  query: string,
+): Promise<GeocodeResult> {
+  const startedAt = performance.now()
+  try {
+    const results = await provider.search(query, context())
+    return {
+      provider: 'graphhopper',
+      query,
+      success: results.length <= 5,
+      count: results.length,
+      latencyMs: Math.round(performance.now() - startedAt),
+      errorCode: results.length <= 5 ? undefined : 'RESULT_LIMIT_EXCEEDED',
+    }
+  } catch (error) {
+    return {
+      provider: 'graphhopper',
+      query,
+      success: false,
+      count: 0,
+      latencyMs: Math.round(performance.now() - startedAt),
+      errorCode: errorCode(error),
+    }
+  }
+}
+
+async function runSettlements(
+  provider: OverpassSettlementProvider,
+  route: RouteCase,
+  routeProfile: RouteProfile,
+  normalizedRoute: NormalizedRoute,
+): Promise<SettlementResult> {
+  const startedAt = performance.now()
+  try {
+    const settlements = await provider.findAlongRoute(normalizedRoute, context())
+    return {
+      provider: 'openstreetmap-overpass',
+      routeId: route.id,
+      routeProfile,
+      success: true,
+      normalizedCandidateCount: settlements.length,
+      latencyMs: Math.round(performance.now() - startedAt),
+    }
+  } catch (error) {
+    return {
+      provider: 'openstreetmap-overpass',
+      routeId: route.id,
+      routeProfile,
+      success: false,
+      normalizedCandidateCount: 0,
+      latencyMs: Math.round(performance.now() - startedAt),
+      errorCode: errorCode(error),
+    }
+  }
+}
+
+function haversineMeters(
+  [fromLng, fromLat]: readonly [number, number],
+  [toLng, toLat]: readonly [number, number],
+): number {
+  const radius = 6_371_008.8
+  const toRadians = (degrees: number) => (degrees * Math.PI) / 180
+  const latDelta = toRadians(toLat - fromLat)
+  const lngDelta = toRadians(toLng - fromLng)
+  const a =
+    Math.sin(latDelta / 2) ** 2 +
+    Math.cos(toRadians(fromLat)) * Math.cos(toRadians(toLat)) * Math.sin(lngDelta / 2) ** 2
+  return 2 * radius * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
+function printTable(title: string, rows: object[], fields: string[]) {
+  console.log(`\n${title}`)
+  console.table(
+    rows.map((row) =>
+      Object.fromEntries(
+        fields.map((field) => [field, (row as Record<string, unknown>)[field] ?? '']),
+      ),
+    ),
+  )
+}
+
+const env = loadEnv(await fs.readFile('.env', 'utf8'))
+if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
+  console.error('Missing ORS_API_KEY or GRAPHHOPPER_API_KEY in .env')
+  process.exitCode = 1
+} else {
+  const routingProvider = new OrsRoutingProvider(env.ORS_API_KEY)
+  const geocodingProvider = new GraphHopperGeocodingProvider(env.GRAPHHOPPER_API_KEY)
+  const settlementProvider = new OverpassSettlementProvider()
+  const routeResults: RouteResult[] = []
+  const geocodeResults: GeocodeResult[] = []
+  const settlementResults: SettlementResult[] = []
+
+  for (const route of ROUTES) {
+    const orsResults = await Promise.all(
+      PRODUCTION_PROFILES.map(({ routeProfile }) =>
+        runOrsRoute(routingProvider, route, routeProfile),
+      ),
+    )
+    routeResults.push(...orsResults)
+    settlementResults.push(
+      ...(await Promise.all(
+        orsResults.flatMap((result) =>
+          result.success && result.normalizedRoute
+            ? [
+                runSettlements(
+                  settlementProvider,
+                  route,
+                  result.routeProfile,
+                  result.normalizedRoute,
+                ),
+              ]
+            : [],
+        ),
+      )),
+    )
+    geocodeResults.push(await runGeocode(geocodingProvider, route.label.split(' -> ')[0]))
+    console.log(
+      `${route.label}: road=${orsResults[0].success ? 'PASS' : orsResults[0].errorCode}, mountain=${orsResults[1].success ? 'PASS' : orsResults[1].errorCode}`,
+    )
+  }
+
+  printTable('Production routing / elevation', routeResults, [
+    'provider',
+    'routeId',
+    'routeProfile',
+    'success',
+    'latencyMs',
+    'distanceMeters',
+    'ascentMeters',
+    'descentMeters',
+    'coordinateCount',
+    'elevationAvailable',
+    'routeRatio',
+    'errorCode',
+  ])
+  printTable('Production geocoding', geocodeResults, [
+    'provider',
+    'query',
+    'success',
+    'count',
+    'latencyMs',
+    'errorCode',
+  ])
+  printTable('Settlement corridor checks from normalized production routes', settlementResults, [
+    'provider',
+    'routeId',
+    'routeProfile',
+    'success',
+    'normalizedCandidateCount',
+    'latencyMs',
+    'errorCode',
+  ])
+
+  await fs.mkdir('artifacts/provider-validation', { recursive: true })
+  await fs.writeFile(
+    'artifacts/provider-validation/latest.json',
+    `${JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        routeResults: routeResults.map(({ normalizedRoute, ...result }) => result),
+        geocodeResults,
+        settlementResults,
+      },
+      null,
+      2,
+    )}\n`,
+  )
+}

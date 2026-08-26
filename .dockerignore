@@ -1,0 +1,10 @@
+node_modules
+dist
+.netlify
+coverage
+playwright-report
+test-results
+.git
+.local-agent
+artifacts
+.env
