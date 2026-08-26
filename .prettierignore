@@ -1,0 +1,7 @@
+dist
+node_modules
+coverage
+artifacts
+.local-agent
+package-lock.json
+.playwright-mcp

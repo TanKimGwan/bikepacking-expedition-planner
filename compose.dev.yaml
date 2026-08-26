@@ -1,0 +1,12 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file:
+      - .env
+    environment:
+      NETLIFY_SITE_ID: ''
+    ports:
+      - '127.0.0.1:${BIKEPACKING_HOST_PORT:-13240}:8888'
+    restart: unless-stopped

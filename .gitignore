@@ -19,6 +19,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Local browser-tool artifacts
+.playwright-mcp/
+
 # Editor / OS
 .DS_Store
 .vscode/
