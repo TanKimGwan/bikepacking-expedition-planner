@@ -5,6 +5,54 @@ const fallbackPlans = JSON.parse(
   readFileSync(new URL('../../src/server/fallback-plans.json', import.meta.url), 'utf8'),
 ) as unknown[]
 
+test('planner stays within Hallmark responsive layout constraints', async ({ page }) => {
+  for (const width of [320, 375, 414, 768, 1280, 1920]) {
+    const height = width === 1280 ? 800 : 900
+    await page.setViewportSize({ width, height })
+    await page.goto('/planner')
+    await page.evaluate(() => document.fonts.ready)
+    await expect(page.getByRole('heading', { name: /Plan the ride/i })).toBeVisible()
+
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    )
+    expect(overflow, `horizontal overflow at ${width}px`).toBeLessThanOrEqual(1)
+
+    const wrappedAffordances = await page
+      .locator('a:visible, button:visible')
+      .evaluateAll((items) =>
+        items.flatMap((item) => {
+          const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT)
+          const rects: DOMRect[] = []
+          let node = walker.nextNode()
+          while (node) {
+            const range = document.createRange()
+            range.selectNodeContents(node)
+            rects.push(
+              ...[...range.getClientRects()].filter((rect) => rect.width > 0 && rect.height > 0),
+            )
+            node = walker.nextNode()
+          }
+
+          const lineBands: Array<{ top: number; bottom: number }> = []
+          for (const rect of rects.sort((left, right) => left.top - right.top)) {
+            const band = lineBands.find(
+              (line) => rect.top < line.bottom - 1 && rect.bottom > line.top + 1,
+            )
+            if (band) {
+              band.top = Math.min(band.top, rect.top)
+              band.bottom = Math.max(band.bottom, rect.bottom)
+            } else {
+              lineBands.push({ top: rect.top, bottom: rect.bottom })
+            }
+          }
+          return lineBands.length > 1 ? [item.textContent?.trim() ?? item.tagName] : []
+        }),
+      )
+    expect(wrappedAffordances, `wrapped affordance at ${width}px`).toEqual([])
+  }
+})
+
 test('curated expedition hero flow reaches a usable plan', async ({ page }) => {
   await page.route('**/api/plan', (route) =>
     route.fulfill({

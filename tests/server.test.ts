@@ -160,7 +160,7 @@ describe('PlanExpeditionUseCase', () => {
 describe('ORS production profile mapping', () => {
   it.each([
     ['paved-priority', 'cycling-road'],
-    ['mixed-surface', 'cycling-mountain'],
+    ['mixed-surface', 'cycling-regular'],
   ] as const)('maps %s to %s', async (routeProfile, providerProfile) => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

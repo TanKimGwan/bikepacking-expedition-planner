@@ -5,11 +5,20 @@ import type {
   ExpeditionInput,
   NormalizedRoute,
 } from '@shared/contracts/expedition'
-import { normalizeRoute, PlanningDomainError, type ProviderRoute } from '@shared/domain/planning'
+import {
+  buildExpeditionPlan,
+  ELEVATION_RECONCILIATION_TOLERANCE_METERS,
+  normalizeRoute,
+  PlanningDomainError,
+  type ProviderRoute,
+} from '@shared/domain/planning'
 
 import { ApplicationError } from '../../src/server/errors'
 import { GraphHopperGeocodingProvider } from '../../src/server/integrations/graphhopper-geocoding'
-import { OrsRoutingProvider } from '../../src/server/integrations/ors-routing'
+import {
+  OrsRoutingProvider,
+  type OrsRoutingProfile,
+} from '../../src/server/integrations/ors-routing'
 import { OverpassSettlementProvider } from '../../src/server/integrations/overpass-settlements'
 import type { ExecutionContext } from '../../src/server/network'
 import {
@@ -57,18 +66,26 @@ const ROUTES = [
   },
 ] as const
 
-const PRODUCTION_PROFILES = [
-  { routeProfile: 'paved-priority', providerProfile: 'cycling-road' },
-  { routeProfile: 'mixed-surface', providerProfile: 'cycling-mountain' },
+const VALIDATION_PROFILES = [
+  { routeProfile: 'paved-priority', providerProfile: 'cycling-road', production: true },
+  { routeProfile: 'mixed-surface', providerProfile: 'cycling-regular', production: true },
+  {
+    routeProfile: 'mixed-surface',
+    providerProfile: 'cycling-mountain',
+    production: false,
+  },
 ] as const
 
 type RouteCase = (typeof ROUTES)[number]
-type RouteProfile = (typeof PRODUCTION_PROFILES)[number]['routeProfile']
+type ValidationProfile = (typeof VALIDATION_PROFILES)[number]
+type RouteProfile = ValidationProfile['routeProfile']
 
 type RouteResult = {
   provider: 'openrouteservice'
   routeId: string
   routeProfile: RouteProfile
+  providerProfile: OrsRoutingProfile
+  validationRole: 'production' | 'diagnostic'
   success: boolean
   latencyMs: number
   distanceMeters?: number
@@ -81,6 +98,9 @@ type RouteResult = {
   maxElevationDeltaHorizontalDistanceMeters?: number
   suspiciousElevationJumpCount?: number
   routeRatio?: number
+  stageAscentDifferenceMeters?: number
+  stageDescentDifferenceMeters?: number
+  stageMetricsReconcile?: boolean
   errorCode?: string
   normalizedRoute?: NormalizedRoute
 }
@@ -98,6 +118,7 @@ type SettlementResult = {
   provider: 'openstreetmap-overpass'
   routeId: string
   routeProfile: RouteProfile
+  providerProfile: OrsRoutingProfile
   success: boolean
   normalizedCandidateCount: number
   latencyMs: number
@@ -197,27 +218,52 @@ function elevationDiagnostics(coordinates: readonly number[][]): {
   }
 }
 
+function stageMetricDiagnostics(input: ExpeditionInput, route: NormalizedRoute) {
+  const plan = buildExpeditionPlan(input, route, [], {
+    routingProvider: 'openrouteservice',
+    elevationProvider: 'openrouteservice route elevation',
+    settlementProvider: 'validation fixture',
+    geocodingProvider: 'validation fixture',
+    source: 'live',
+  })
+  const stageAscent = plan.stages.reduce((total, stage) => total + stage.ascentMeters, 0)
+  const stageDescent = plan.stages.reduce((total, stage) => total + stage.descentMeters, 0)
+  const stageAscentDifferenceMeters = Math.abs(stageAscent - route.ascentMeters)
+  const stageDescentDifferenceMeters = Math.abs(stageDescent - route.descentMeters)
+  return {
+    stageAscentDifferenceMeters: Number(stageAscentDifferenceMeters.toFixed(3)),
+    stageDescentDifferenceMeters: Number(stageDescentDifferenceMeters.toFixed(3)),
+    stageMetricsReconcile:
+      stageAscentDifferenceMeters <= ELEVATION_RECONCILIATION_TOLERANCE_METERS &&
+      stageDescentDifferenceMeters <= ELEVATION_RECONCILIATION_TOLERANCE_METERS,
+  }
+}
+
 async function runOrsRoute(
   provider: OrsRoutingProvider,
   route: RouteCase,
-  routeProfile: RouteProfile,
+  profile: ValidationProfile,
 ): Promise<RouteResult> {
   const startedAt = performance.now()
   let diagnostics: ReturnType<typeof elevationDiagnostics> = {
     suspiciousElevationJumpCount: 0,
   }
   try {
-    const providerRoute: ProviderRoute = await provider.route(
-      inputFor(route, routeProfile),
-      context(),
-    )
+    const input = inputFor(route, profile.routeProfile)
+    const providerRoute: ProviderRoute = profile.production
+      ? await provider.route(input, context())
+      : await provider.routeWithProfile(input, context(), profile.providerProfile)
     diagnostics = elevationDiagnostics(providerRoute.coordinates)
     const normalizedRoute = normalizeRoute(providerRoute)
+    const stageDiagnostics = stageMetricDiagnostics(input, normalizedRoute)
+    const success = stageDiagnostics.stageMetricsReconcile
     return {
       provider: 'openrouteservice',
       routeId: route.id,
-      routeProfile,
-      success: true,
+      routeProfile: profile.routeProfile,
+      providerProfile: profile.providerProfile,
+      validationRole: profile.production ? 'production' : 'diagnostic',
+      success,
       latencyMs: Math.round(performance.now() - startedAt),
       distanceMeters: Math.round(normalizedRoute.distanceMeters),
       ascentMeters: Math.round(normalizedRoute.ascentMeters),
@@ -228,6 +274,8 @@ async function runOrsRoute(
       ),
       elevationPlausible: true,
       ...diagnostics,
+      ...stageDiagnostics,
+      errorCode: success ? undefined : 'STAGE_METRICS_MISMATCH',
       routeRatio: Number(
         (normalizedRoute.distanceMeters / haversineMeters(route.start, route.end)).toFixed(2),
       ),
@@ -237,7 +285,9 @@ async function runOrsRoute(
     return {
       provider: 'openrouteservice',
       routeId: route.id,
-      routeProfile,
+      routeProfile: profile.routeProfile,
+      providerProfile: profile.providerProfile,
+      validationRole: profile.production ? 'production' : 'diagnostic',
       success: false,
       latencyMs: Math.round(performance.now() - startedAt),
       errorCode: errorCode(error),
@@ -278,6 +328,7 @@ async function runSettlements(
   provider: OverpassSettlementProvider,
   route: RouteCase,
   routeProfile: RouteProfile,
+  providerProfile: OrsRoutingProfile,
   normalizedRoute: NormalizedRoute,
 ): Promise<SettlementResult> {
   const startedAt = performance.now()
@@ -287,6 +338,7 @@ async function runSettlements(
       provider: 'openstreetmap-overpass',
       routeId: route.id,
       routeProfile,
+      providerProfile,
       success: true,
       normalizedCandidateCount: settlements.length,
       latencyMs: Math.round(performance.now() - startedAt),
@@ -296,6 +348,7 @@ async function runSettlements(
       provider: 'openstreetmap-overpass',
       routeId: route.id,
       routeProfile,
+      providerProfile,
       success: false,
       normalizedCandidateCount: 0,
       latencyMs: Math.round(performance.now() - startedAt),
@@ -343,20 +396,20 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
 
   for (const route of ROUTES) {
     const orsResults = await Promise.all(
-      PRODUCTION_PROFILES.map(({ routeProfile }) =>
-        runOrsRoute(routingProvider, route, routeProfile),
-      ),
+      VALIDATION_PROFILES.map((profile) => runOrsRoute(routingProvider, route, profile)),
     )
     routeResults.push(...orsResults)
+    const productionResults = orsResults.filter((result) => result.validationRole === 'production')
     settlementResults.push(
       ...(await Promise.all(
-        orsResults.flatMap((result) =>
+        productionResults.flatMap((result) =>
           result.success && result.normalizedRoute
             ? [
                 runSettlements(
                   settlementProvider,
                   route,
                   result.routeProfile,
+                  result.providerProfile,
                   result.normalizedRoute,
                 ),
               ]
@@ -366,7 +419,7 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     )
     geocodeResults.push(await runGeocode(geocodingProvider, route.label.split(' -> ')[0]))
     console.log(
-      `${route.label}: road=${orsResults[0].success ? 'PASS' : orsResults[0].errorCode}, mountain=${orsResults[1].success ? 'PASS' : orsResults[1].errorCode}`,
+      `${route.label}: ${orsResults.map((result) => `${result.providerProfile}=${result.success ? 'PASS' : result.errorCode}`).join(', ')}`,
     )
   }
 
@@ -374,6 +427,8 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'provider',
     'routeId',
     'routeProfile',
+    'providerProfile',
+    'validationRole',
     'success',
     'latencyMs',
     'distanceMeters',
@@ -386,6 +441,9 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'maxElevationDeltaHorizontalDistanceMeters',
     'suspiciousElevationJumpCount',
     'routeRatio',
+    'stageAscentDifferenceMeters',
+    'stageDescentDifferenceMeters',
+    'stageMetricsReconcile',
     'errorCode',
   ])
   printTable('Production geocoding', geocodeResults, [
@@ -406,29 +464,34 @@ if (!env.ORS_API_KEY || !env.GRAPHHOPPER_API_KEY) {
     'errorCode',
   ])
 
+  const productionRouteResults = routeResults.filter(
+    (result) => result.validationRole === 'production',
+  )
+  const expectedProductionResults =
+    ROUTES.length * VALIDATION_PROFILES.filter((profile) => profile.production).length
   const summary = summarizeProviderValidation(
-    routeResults,
+    productionRouteResults,
     geocodeResults,
     settlementResults,
-    ROUTES.length * PRODUCTION_PROFILES.length,
+    expectedProductionResults,
     ROUTES.length,
-    routeResults.filter((result) => result.success).length,
+    productionRouteResults.filter((result) => result.success).length,
   )
   const coreSummary = summarizeProviderValidation(
-    routeResults,
+    productionRouteResults,
     geocodeResults,
     [],
-    ROUTES.length * PRODUCTION_PROFILES.length,
+    expectedProductionResults,
     ROUTES.length,
     0,
   )
   const corridorSummary = summarizeProviderValidation(
-    routeResults.map(() => ({ success: true })),
+    productionRouteResults.map(() => ({ success: true })),
     geocodeResults.map(() => ({ success: true })),
     settlementResults,
-    routeResults.length,
+    expectedProductionResults,
     geocodeResults.length,
-    routeResults.filter((result) => result.success).length,
+    productionRouteResults.filter((result) => result.success).length,
   )
   console.log(`\nCore provider status: ${formatProviderValidationStatus(coreSummary)}`)
   console.log(`Settlement corridor status: ${formatProviderValidationStatus(corridorSummary)}`)

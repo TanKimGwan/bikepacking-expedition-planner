@@ -198,6 +198,8 @@ describe('planning domain', () => {
     })
     expect(curated?.provenance.source).toBe('cached')
     expect(curated?.warnings.some((warning) => warning.code === 'CACHED_DEMO_FALLBACK')).toBe(true)
+    expect(curated?.summary.totalDistanceMeters).toBeCloseTo(123_745.8, 1)
+    expect(curated?.summary.totalAscentMeters).toBeCloseTo(1_937.1, 1)
     expect(cachedPlanFor(input)).toBeNull()
   })
 

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  CategoryScale,
   Chart,
   Filler,
   LinearScale,
@@ -12,18 +11,11 @@ import {
 } from 'chart.js'
 
 import type { ExpeditionPlan } from '@shared/contracts/expedition'
+import { toElevationChartPoints } from '@/application/elevation-chart'
 import type { UnitSystem } from '@/stores/planner'
 import { formatElevation } from '@/utils/format'
 
-Chart.register(
-  CategoryScale,
-  LinearScale,
-  LineController,
-  LineElement,
-  PointElement,
-  Tooltip,
-  Filler,
-)
+Chart.register(LinearScale, LineController, LineElement, PointElement, Tooltip, Filler)
 const props = defineProps<{ plan: ExpeditionPlan; units: UnitSystem }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
@@ -37,16 +29,9 @@ function render() {
   chart = new Chart(canvas.value, {
     type: 'line',
     data: {
-      labels: points.map((point) =>
-        (point.distanceFromStartMeters / (props.units === 'imperial' ? 1609.344 : 1000)).toFixed(0),
-      ),
       datasets: [
         {
-          data: points.map((point) =>
-            props.units === 'imperial'
-              ? (point.elevationMeters ?? 0) * 3.28084
-              : (point.elevationMeters ?? 0),
-          ),
+          data: toElevationChartPoints(points, props.units),
           borderColor: '#f27b35',
           backgroundColor: 'rgba(242, 123, 53, 0.16)',
           borderWidth: 2,
@@ -70,6 +55,7 @@ function render() {
       },
       scales: {
         x: {
+          type: 'linear',
           grid: { color: 'rgba(210, 226, 220, 0.12)' },
           ticks: {
             color: '#91a39e',
