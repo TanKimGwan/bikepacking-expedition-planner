@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import type { CanonicalLocation } from '@shared/contracts/expedition'
 
@@ -13,6 +13,7 @@ import RouteMap from '@/components/RouteMap.vue'
 import StageCard from '@/components/StageCard.vue'
 import { usePlannerStore } from '@/stores/planner'
 import { formatDistance, formatDuration, formatElevation } from '@/utils/format'
+import '@/planner.css'
 
 const route = useRoute()
 const planner = usePlannerStore()
@@ -84,18 +85,24 @@ async function copyPlanId() {
 
 <template>
   <main class="planner-page">
-    <header class="topbar shell-width planner-topbar">
-      <a class="brand-mark" href="/">WAYPOINT <span>/</span> EXPEDITION PLANNER</a>
-      <div class="planner-topbar-right">
-        <span class="live-dot" /> <span>Route intelligence for humans and agents</span
-        ><span v-if="planner.webMcpAvailable" class="agent-chip">WebMCP ready</span>
+    <nav class="landing-nav planner-nav" aria-label="Primary">
+      <div class="landing-nav-inner">
+        <RouterLink class="brand-mark landing-brand" to="/" aria-label="Waypoint home">
+          <span>WAYPOINT</span><b aria-hidden="true">/</b><span>EXPEDITION</span>
+        </RouterLink>
+        <div class="landing-nav-meta">
+          <span class="topbar-note">WEBMCP CHALLENGE / 2026</span>
+          <RouterLink class="landing-nav-link" to="/" aria-label="Back to Waypoint home"
+            >Back to home <span aria-hidden="true">↗</span></RouterLink
+          >
+        </div>
       </div>
-    </header>
+    </nav>
 
     <section class="planner-layout shell-width">
       <div class="control-column">
         <div class="planner-intro">
-          <p class="eyebrow"><span class="eyebrow-dot" /> Expedition desk</p>
+          <p class="planner-kicker">Route planning console</p>
           <h1>Plan the ride<br /><em>between the dots.</em></h1>
           <p>
             Start with two places. We’ll turn the distance into days you can read, ride, and export.
@@ -207,8 +214,10 @@ async function copyPlanId() {
           </Transition>
           <button
             class="button button--primary generate-button"
+            :class="{ 'is-loading': planner.status === 'planning' }"
             type="submit"
             :disabled="!planner.canGenerate || planner.status === 'planning'"
+            :aria-busy="planner.status === 'planning'"
           >
             <span>{{
               planner.status === 'planning'
@@ -274,7 +283,6 @@ async function copyPlanId() {
     <section v-if="planner.currentPlan" class="results-shell shell-width">
       <div class="result-heading">
         <div>
-          <p class="eyebrow"><span class="eyebrow-dot eyebrow-dot--orange" /> Expedition brief</p>
           <h2>
             {{ planner.currentPlan.input.start.locality ?? planner.currentPlan.input.start.label }}
             <span>→</span>
@@ -372,8 +380,7 @@ async function copyPlanId() {
         <div class="stages-panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">DAILY STAGES</span>
-              <h3>A rhythm for the road</h3>
+              <h3>DAILY STAGES</h3>
             </div>
             <span>{{ planner.currentPlan.stages.length }} stages</span>
           </div>
@@ -394,8 +401,7 @@ async function copyPlanId() {
         <div class="elevation-panel">
           <div class="panel-heading">
             <div>
-              <span class="eyebrow">ELEVATION PROFILE</span>
-              <h3>Read the effort</h3>
+              <h3>ELEVATION PROFILE</h3>
             </div>
             <span>Full route</span>
           </div>

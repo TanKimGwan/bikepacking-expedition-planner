@@ -21,7 +21,7 @@ const mapElement = ref<HTMLDivElement | null>(null)
 let map: LeafletMap | null = null
 let layers: LayerGroup | null = null
 
-function marker(location: CanonicalLocation, color: string) {
+function marker(location: CanonicalLocation, color: string, role: 'start' | 'destination') {
   const tooltip = document.createElement('span')
   tooltip.textContent = location.label
   return L.circleMarker([location.lat, location.lng], {
@@ -30,6 +30,7 @@ function marker(location: CanonicalLocation, color: string) {
     fillColor: color,
     fillOpacity: 1,
     weight: 3,
+    className: `route-marker route-marker--${role}`,
   }).bindTooltip(tooltip)
 }
 
@@ -67,11 +68,11 @@ function renderMap() {
     }
   }
   if (props.start) {
-    layers.addLayer(marker(props.start, '#8bd0b2'))
+    layers.addLayer(marker(props.start, '#8bd0b2', 'start'))
     if (!selected) bounds.push([props.start.lat, props.start.lng])
   }
   if (props.destination) {
-    layers.addLayer(marker(props.destination, '#f27b35'))
+    layers.addLayer(marker(props.destination, '#f27b35', 'destination'))
     if (!selected) bounds.push([props.destination.lat, props.destination.lng])
   }
   if (bounds.length > 1) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 12 })

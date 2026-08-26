@@ -33,7 +33,7 @@ test('renders untrusted map labels as literal text', async ({ page }) => {
   await page.goto('/planner?example=sf-santa-cruz')
   await page.getByRole('button', { name: /Generate expedition/i }).click()
   await expect(page.locator('.results-shell')).toBeVisible()
-  await page.locator('.leaflet-interactive[fill]:not([fill="none"])').first().click({ force: true })
+  await page.locator('.route-marker--start').dispatchEvent('click')
 
   const tooltip = page.locator('.leaflet-tooltip')
   await expect(tooltip).toBeVisible()

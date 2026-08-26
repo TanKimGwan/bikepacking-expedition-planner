@@ -83,7 +83,6 @@ function clear() {
         ×
       </button>
     </div>
-    <div v-if="busy" class="field-hint">Searching places…</div>
     <ul v-if="results.length" class="location-results">
       <li v-for="result in results" :key="result.id">
         <button type="button" @click="select(result)">
@@ -92,8 +91,11 @@ function clear() {
         </button>
       </li>
     </ul>
-    <div v-else-if="query.length > 0 && query.length < 3" class="field-hint">
-      Type 3 or more characters to search.
+    <div class="field-hint" aria-live="polite">
+      <span v-if="busy">Searching places…</span>
+      <span v-else-if="query.length > 0 && query.length < 3">
+        Type 3 or more characters to search.
+      </span>
     </div>
   </div>
 </template>

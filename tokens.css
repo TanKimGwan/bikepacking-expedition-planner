@@ -1,0 +1,66 @@
+:root {
+  --color-paper: oklch(15% 0.022 239);
+  --color-paper-2: oklch(19% 0.026 235);
+  --color-paper-3: oklch(24% 0.028 232);
+  --color-ink: oklch(95% 0.012 174);
+  --color-ink-2: oklch(82% 0.018 188);
+  --color-muted: oklch(69% 0.023 198);
+  --color-rule: oklch(34% 0.028 226);
+  --color-rule-strong: oklch(52% 0.032 218);
+  --color-accent: oklch(70% 0.19 49);
+  --color-accent-soft: oklch(82% 0.11 67);
+  --color-accent-ink: oklch(15% 0.022 239);
+  --color-signal: oklch(82% 0.13 163);
+  --color-signal-ink: oklch(15% 0.022 239);
+  --color-danger: oklch(68% 0.18 28);
+  --color-focus: oklch(91% 0.1 149);
+
+  --font-display: 'Big Shoulders Display', 'Arial Narrow', sans-serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+
+  --space-3xs: 0.125rem;
+  --space-2xs: 0.25rem;
+  --space-xs: 0.5rem;
+  --space-sm: 0.75rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
+  --space-4xl: 9rem;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-md: 1.25rem;
+  --text-lg: 1.5625rem;
+  --text-xl: 1.9531rem;
+  --text-2xl: 2.4414rem;
+  --text-3xl: 3.0518rem;
+  --text-4xl: 3.8147rem;
+  --text-display: clamp(3.5rem, 9vw + 1rem, 5.5rem);
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 100ms;
+  --dur-short: 160ms;
+  --dur-long: 300ms;
+  --dur-spin: 800ms;
+  --dur-reduced: 120ms;
+  --dur-spin-reduced: 1500ms;
+
+  --rule-thin: 1px;
+  --rule-bold: 2px;
+  --radius-card: 0;
+  --radius-input: 0.125rem;
+  --radius-pill: 999px;
+
+  --z-base: 1;
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 400;
+  --z-toast: 500;
+  --z-tooltip: 600;
+}
