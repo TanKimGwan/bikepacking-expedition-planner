@@ -235,6 +235,19 @@ describe('planning domain', () => {
     }
   })
 
+  it('fails closed when a curated route has no profile-matched fallback', () => {
+    const unsupportedProfiles: Array<[PresetId, ExpeditionInput['routeProfile']]> = [
+      ['sf-santa-cruz', 'mixed-surface'],
+      ['amsterdam-brussels', 'mixed-surface'],
+      ['bandung-pangandaran', 'paved-priority'],
+    ]
+
+    for (const [presetId, routeProfile] of unsupportedProfiles) {
+      const planInput = ExpeditionInputSchema.parse({ ...PRESETS[presetId].input, routeProfile })
+      expect(cachedPlanFor(planInput)).toBeNull()
+    }
+  })
+
   it('keeps every cached template elevation total reconciled with its stages', () => {
     for (const template of fallbackPlans) {
       expect(template.stages.reduce((total, stage) => total + stage.ascentMeters, 0)).toBeCloseTo(

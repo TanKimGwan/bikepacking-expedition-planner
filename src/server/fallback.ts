@@ -40,7 +40,8 @@ export function cachedPlanFor(input: ExpeditionInput): ExpeditionPlan | null {
         haversineMeters(
           [input.destination.lng, input.destination.lat],
           [result.data.input.destination.lng, result.data.input.destination.lat],
-        ) < 3_000,
+        ) < 3_000 &&
+        result.data.input.routeProfile === input.routeProfile,
     )
   if (!parsed?.success) return null
   try {

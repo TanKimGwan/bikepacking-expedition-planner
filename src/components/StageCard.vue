@@ -16,6 +16,7 @@ const emit = defineEmits<{ select: [] }>()
   <button
     class="stage-card"
     :class="{ 'stage-card--active': active }"
+    :aria-pressed="active"
     type="button"
     @click="emit('select')"
   >

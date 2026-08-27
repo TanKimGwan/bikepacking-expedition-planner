@@ -48,6 +48,35 @@ test('landing stays within Sport responsive layout constraints', async ({ page }
   }
 })
 
+test('keeps landing slab copy inside its horizontal padding', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+
+  const insets = await page.evaluate(() => {
+    const measure = (slabSelector: string, contentSelector: string) => {
+      const slab = document.querySelector<HTMLElement>(slabSelector)
+      const content = document.querySelector<HTMLElement>(contentSelector)
+      if (!slab || !content) throw new Error(`Missing landing element: ${slabSelector}`)
+      const slabRect = slab.getBoundingClientRect()
+      const contentRect = content.getBoundingClientRect()
+      return {
+        paddingLeft: Number.parseFloat(getComputedStyle(slab).paddingLeft),
+        contentInset: contentRect.left - slabRect.left,
+      }
+    }
+
+    return {
+      proof: measure('.landing-proof', '.proof-intro'),
+      footer: measure('.landing-footer', '.landing-footer-statement'),
+    }
+  })
+
+  expect(insets.proof.paddingLeft).toBeGreaterThanOrEqual(16)
+  expect(insets.proof.contentInset).toBeGreaterThanOrEqual(16)
+  expect(insets.footer.paddingLeft).toBeGreaterThanOrEqual(16)
+  expect(insets.footer.contentInset).toBeGreaterThanOrEqual(16)
+})
+
 test('sample expedition CTA opens the planner with its curated route', async ({ page }) => {
   await page.goto('/')
   await page.getByRole('link', { name: /Plan a sample expedition/i }).click()

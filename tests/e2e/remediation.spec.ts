@@ -59,6 +59,29 @@ test('fits the map to the selected stage', async ({ page }) => {
   await expect.poll(mapState).not.toEqual(before)
 })
 
+test('exposes selected units and stage state programmatically', async ({ page }) => {
+  await useFixture(page)
+  await page.goto('/planner?example=sf-santa-cruz')
+  await page.getByRole('button', { name: /Generate expedition/i }).click()
+  await expect(page.locator('.results-shell')).toBeVisible()
+
+  const metric = page.getByRole('button', { name: 'Metric', exact: true })
+  const imperial = page.getByRole('button', { name: 'Imperial', exact: true })
+  await expect(metric).toHaveAttribute('aria-pressed', 'true')
+  await expect(imperial).toHaveAttribute('aria-pressed', 'false')
+
+  await imperial.click()
+  await expect(metric).toHaveAttribute('aria-pressed', 'false')
+  await expect(imperial).toHaveAttribute('aria-pressed', 'true')
+
+  const dayOne = page.getByRole('button', { name: /Day 01/i })
+  await expect(dayOne).toHaveAttribute('aria-pressed', 'false')
+  await dayOne.click()
+  await expect(dayOne).toHaveAttribute('aria-pressed', 'true')
+  await dayOne.click()
+  await expect(dayOne).toHaveAttribute('aria-pressed', 'false')
+})
+
 test('contains the planner at a 390px viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await useFixture(page)
