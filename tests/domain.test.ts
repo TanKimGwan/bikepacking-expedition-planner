@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { buildGpx, sanitizeFilename } from '@/application/gpx'
 import { PRESETS, type PresetId } from '@/application/presets'
 import { cachedPlanFor } from '@/server/fallback'
+import fallbackPlans from '@/server/fallback-plans.json'
 import { haversineMeters } from '@shared/domain/geo'
 import { ExpeditionInputSchema } from '@shared/contracts/expedition'
 import {
@@ -234,13 +235,29 @@ describe('planning domain', () => {
     }
   })
 
-  it('does not expose a cached route with implausible elevation', () => {
+  it('keeps every cached template elevation total reconciled with its stages', () => {
+    for (const template of fallbackPlans) {
+      expect(template.stages.reduce((total, stage) => total + stage.ascentMeters, 0)).toBeCloseTo(
+        template.route.ascentMeters,
+        6,
+      )
+      expect(template.stages.reduce((total, stage) => total + stage.descentMeters, 0)).toBeCloseTo(
+        template.route.descentMeters,
+        6,
+      )
+    }
+  })
+
+  it('keeps the curated mixed-surface fallback on plausible elevation data', () => {
     const planInput = ExpeditionInputSchema.parse({
       ...PRESETS['bandung-pangandaran'].input,
       days: 6,
     })
+    const plan = cachedPlanFor(planInput)
 
-    expect(cachedPlanFor(planInput)).toBeNull()
+    expect(plan).not.toBeNull()
+    expect(plan?.route.ascentMeters).toBeLessThan(10_000)
+    expect(plan?.route.descentMeters).toBeLessThan(10_000)
   })
 })
 

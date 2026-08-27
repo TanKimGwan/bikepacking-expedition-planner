@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { toElevationChartPoints } from '@/application/elevation-chart'
+import { normalizeRoute } from '@shared/domain/planning'
 
 describe('elevation chart points', () => {
   it('uses cumulative distance for the linear x axis', () => {
@@ -18,5 +19,19 @@ describe('elevation chart points', () => {
       { x: 278, y: 20 },
       { x: 1000, y: 30 },
     ])
+  })
+
+  it('ends at the normalized route distance', () => {
+    const route = normalizeRoute({
+      coordinates: [
+        [0, 0, 10],
+        [0, 1, 20],
+        [0, 2, 30],
+      ],
+    })
+
+    const points = toElevationChartPoints(route.points, 'metric')
+
+    expect(points.at(-1)?.x).toBeCloseTo(route.distanceMeters / 1_000, 6)
   })
 })
