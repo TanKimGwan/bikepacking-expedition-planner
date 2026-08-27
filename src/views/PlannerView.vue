@@ -296,12 +296,14 @@ async function copyPlanId() {
           <div class="unit-toggle" role="group" aria-label="Unit system">
             <button
               :class="{ active: planner.unitSystem === 'metric' }"
+              :aria-pressed="planner.unitSystem === 'metric'"
               type="button"
               @click="setUnits('metric')"
             >
               Metric</button
             ><button
               :class="{ active: planner.unitSystem === 'imperial' }"
+              :aria-pressed="planner.unitSystem === 'imperial'"
               type="button"
               @click="setUnits('imperial')"
             >
