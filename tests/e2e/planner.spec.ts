@@ -74,6 +74,10 @@ test('curated expedition hero flow reaches a usable plan', async ({ page }) => {
   await page.reload()
   await expect(page.locator('.results-shell')).toBeVisible()
   await expect(page.getByText(/TOTAL DISTANCE/)).toBeVisible()
+
+  await page.goto('/planner?example=amsterdam-brussels')
+  await expect(page.locator('.results-shell')).toHaveCount(0)
+  await expect(page.getByRole('textbox', { name: 'Start' })).toHaveValue(/Amsterdam/)
 })
 
 test('WebMCP registry exposes four structured tools without UI scraping', async ({ page }) => {

@@ -51,13 +51,21 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   async function restore() {
-    currentPlan.value = await loadCurrentPlan()
-    if (currentPlan.value) {
-      if (!draftInput.value.start && !draftInput.value.destination) {
-        draftInput.value = { ...currentPlan.value.input }
-      }
-      status.value = 'success'
-    }
+    const savedPlan = await loadCurrentPlan()
+    if (!savedPlan) return
+    const draftMatchesSavedPlan =
+      draftInput.value.start?.lat === savedPlan.input.start.lat &&
+      draftInput.value.start?.lng === savedPlan.input.start.lng &&
+      draftInput.value.destination?.lat === savedPlan.input.destination.lat &&
+      draftInput.value.destination?.lng === savedPlan.input.destination.lng &&
+      draftInput.value.days === savedPlan.input.days &&
+      draftInput.value.bikeType === savedPlan.input.bikeType &&
+      draftInput.value.routeProfile === savedPlan.input.routeProfile &&
+      draftInput.value.fitness === savedPlan.input.fitness
+    if ((draftInput.value.start || draftInput.value.destination) && !draftMatchesSavedPlan) return
+    currentPlan.value = savedPlan
+    if (!draftMatchesSavedPlan) draftInput.value = { ...savedPlan.input }
+    status.value = 'success'
   }
 
   async function generate() {
