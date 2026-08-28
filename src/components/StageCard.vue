@@ -5,6 +5,8 @@ import {
   formatDistance,
   formatDuration,
   formatElevation,
+  formatEffortLevel,
+  formatRelativeEffortLabel,
   formatSettlementType,
 } from '@/utils/format'
 
@@ -30,6 +32,13 @@ const emit = defineEmits<{ select: [] }>()
       ><span>↑ {{ formatElevation(stage.ascentMeters, units) }}</span
       ><span>~ {{ formatDuration(stage.estimatedRidingTimeSeconds) }}</span></span
     >
+    <span v-if="stage.effort" class="stage-effort-row">
+      <span>{{ formatEffortLevel(stage.effort.distanceLevel) }}</span>
+      <span>{{ formatEffortLevel(stage.effort.climbingLevel) }}</span>
+      <span v-for="label in stage.effort.relativeLabels" :key="label" class="stage-effort-label">
+        {{ formatRelativeEffortLabel(label) }}
+      </span>
+    </span>
     <span v-if="isFinal" class="stage-endpoint">Final destination</span>
     <span v-else class="stage-endpoint"
       >Ends at {{ formatSettlementType(stage.end.settlementType).toLowerCase() }}</span

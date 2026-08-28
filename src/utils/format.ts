@@ -1,4 +1,5 @@
 import type { UnitSystem } from '@/stores/planner'
+import type { StageEffortContext } from '@shared/contracts/expedition'
 
 export function formatDistance(meters: number, units: UnitSystem, digits = 0): string {
   const value = units === 'imperial' ? meters / 1_609.344 : meters / 1_000
@@ -19,4 +20,23 @@ export function formatDuration(seconds: number): string {
 
 export function formatSettlementType(value?: string): string {
   return value ? value[0].toUpperCase() + value.slice(1) : 'Route point'
+}
+
+type EffortLevel = StageEffortContext['distanceLevel'] | StageEffortContext['climbingLevel']
+
+export function formatEffortLevel(level: EffortLevel): string {
+  return {
+    light: 'Light distance',
+    moderate: 'Moderate distance',
+    demanding: 'Demanding distance',
+    low: 'Low climbing',
+    rolling: 'Rolling climbing',
+    'climbing-heavy': 'Climbing-heavy',
+  }[level]
+}
+
+export function formatRelativeEffortLabel(
+  label: StageEffortContext['relativeLabels'][number],
+): string {
+  return label === 'longest-stage' ? 'Longest stage' : 'Most climbing'
 }

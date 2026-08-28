@@ -35,6 +35,25 @@ export class PlanExpeditionUseCase {
     try {
       validatePlanningLimits(input)
       const providerRoute = await this.routingProvider.route(input, context)
+      const providerDistanceMeters = providerRoute.distanceMeters
+      if (
+        providerDistanceMeters !== undefined &&
+        (!Number.isFinite(providerDistanceMeters) || providerDistanceMeters <= 0)
+      ) {
+        throw new ApplicationError(
+          'PROVIDER_RESPONSE_INVALID',
+          'The routing provider returned an invalid route distance.',
+        )
+      }
+      if (
+        providerDistanceMeters !== undefined &&
+        providerDistanceMeters > MAX_ROUTE_DISTANCE_METERS
+      ) {
+        throw new ApplicationError(
+          'ROUTE_TOO_LONG',
+          'The routed distance is beyond the 1,000 km MVP limit.',
+        )
+      }
       let route
       try {
         route = normalizeRoute(providerRoute)

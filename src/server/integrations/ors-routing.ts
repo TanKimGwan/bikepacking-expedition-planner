@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { ExpeditionInput } from '@shared/contracts/expedition'
+import type { ExpeditionInput, SurfaceBreakdown } from '@shared/contracts/expedition'
 import type { ProviderRoute } from '@shared/domain/planning'
 import type { ExecutionContext } from '../network'
 import { fetchJson } from '../network'
@@ -15,6 +15,13 @@ const CoordinatesSchema = z
     ]),
   )
   .min(2)
+const OrsSurfaceSummarySchema = z.object({
+  value: z.number().int().finite().nonnegative(),
+  amount: z.number().finite().min(0).max(100),
+})
+const OrsSurfaceExtrasSchema = z.object({
+  summary: z.array(OrsSurfaceSummarySchema).min(1),
+})
 const OrsResponseSchema = z.object({
   features: z
     .array(
@@ -24,6 +31,7 @@ const OrsResponseSchema = z.object({
           summary: z.object({ distance: z.number().finite().positive() }),
           ascent: z.number().finite().nonnegative().optional(),
           descent: z.number().finite().nonnegative().optional(),
+          extras: z.unknown().optional(),
         }),
       }),
     )
@@ -41,6 +49,39 @@ export function orsProfileForRouteProfile(
   routeProfile: ExpeditionInput['routeProfile'],
 ): OrsRoutingProfile {
   return ORS_PROFILE_BY_ROUTE_PROFILE[routeProfile]
+}
+
+// ponytail: three surface categories keep the contract readable; add provider-specific classes only when the UI can explain them.
+const PAVED_SURFACE_IDS = new Set([1, 3, 4, 14])
+const UNPAVED_SURFACE_IDS = new Set([2, 6, 7, 8, 10, 11, 12, 13, 15, 17, 18])
+
+function normalizeSurfaceBreakdown(extras: unknown): SurfaceBreakdown | undefined {
+  const parsed = OrsSurfaceExtrasSchema.safeParse(
+    extras && typeof extras === 'object' && 'surface' in extras
+      ? (extras as { surface?: unknown }).surface
+      : undefined,
+  )
+  if (!parsed.success) return undefined
+
+  const totals = { paved: 0, unpaved: 0, unknown: 0 }
+  for (const item of parsed.data.summary) {
+    const category = PAVED_SURFACE_IDS.has(item.value)
+      ? 'paved'
+      : UNPAVED_SURFACE_IDS.has(item.value)
+        ? 'unpaved'
+        : 'unknown'
+    totals[category] += item.amount
+  }
+  const total = totals.paved + totals.unpaved + totals.unknown
+  if (!Number.isFinite(total) || total <= 0) return undefined
+
+  const paved = Number(((totals.paved / total) * 100).toFixed(2))
+  const unpaved = Number(((totals.unpaved / total) * 100).toFixed(2))
+  return {
+    paved,
+    unpaved,
+    unknown: Number(Math.max(0, 100 - paved - unpaved).toFixed(2)),
+  }
 }
 
 export class OrsRoutingProvider implements RoutingProvider {
@@ -69,6 +110,7 @@ export class OrsRoutingProvider implements RoutingProvider {
           ],
           instructions: false,
           elevation: true,
+          extra_info: ['surface'],
         }),
       },
       OrsResponseSchema,
@@ -87,6 +129,7 @@ export class OrsRoutingProvider implements RoutingProvider {
       distanceMeters: feature.properties.summary.distance,
       ascentMeters: feature.properties.ascent,
       descentMeters: feature.properties.descent,
+      surfaceBreakdown: normalizeSurfaceBreakdown(feature.properties.extras),
     }
   }
 }

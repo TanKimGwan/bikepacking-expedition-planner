@@ -112,6 +112,43 @@ describe('PlanExpeditionUseCase', () => {
     expect(settlementProvider.findAlongRoute).not.toHaveBeenCalled()
   })
 
+  it.each([
+    [999_999, true],
+    [1_000_000, true],
+    [1_000_001, false],
+  ])('enforces the provider routed-distance cap at %d meters', async (distanceMeters, allowed) => {
+    const settlementProvider = { findAlongRoute: vi.fn().mockResolvedValue([]) }
+    const useCase = new PlanExpeditionUseCase(
+      {
+        route: vi.fn().mockResolvedValue({
+          coordinates: [
+            [0, 0],
+            [0, 0.1],
+            [0, 0.2],
+          ],
+          distanceMeters,
+        }),
+      },
+      settlementProvider,
+      provenance,
+    )
+
+    if (allowed) {
+      const plan = await useCase.execute(input, context)
+      expect(plan.route.distanceMeters).toBe(distanceMeters)
+      expect(plan.stages.reduce((total, stage) => total + stage.distanceMeters, 0)).toBeCloseTo(
+        distanceMeters,
+        6,
+      )
+      expect(settlementProvider.findAlongRoute).toHaveBeenCalledOnce()
+    } else {
+      await expect(useCase.execute(input, context)).rejects.toMatchObject({
+        code: 'ROUTE_TOO_LONG',
+      })
+      expect(settlementProvider.findAlongRoute).not.toHaveBeenCalled()
+    }
+  })
+
   it('maps implausible route elevation to PROVIDER_RESPONSE_INVALID', async () => {
     const useCase = new PlanExpeditionUseCase(
       {
@@ -185,6 +222,7 @@ describe('ORS production profile mapping', () => {
     try {
       await new OrsRoutingProvider('test-key').route({ ...input, routeProfile }, context)
       expect(String(fetchMock.mock.calls[0]?.[0])).toContain(`/directions/${providerProfile}/`)
+      expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)).extra_info).toEqual(['surface'])
     } finally {
       vi.unstubAllGlobals()
     }
@@ -192,6 +230,91 @@ describe('ORS production profile mapping', () => {
 })
 
 describe('ORS response boundary', () => {
+  it('normalizes documented surface categories into a canonical breakdown', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            features: [
+              {
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [0, 0, 0],
+                    [0, 0.2, 0],
+                  ],
+                },
+                properties: {
+                  summary: { distance: 22_000 },
+                  extras: {
+                    surface: {
+                      summary: [
+                        { value: 3, distance: 11_000, amount: 50 },
+                        { value: 10, distance: 5_500, amount: 25 },
+                        { value: 0, distance: 5_500, amount: 25 },
+                      ],
+                    },
+                  },
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+    try {
+      await expect(new OrsRoutingProvider('test-key').route(input, context)).resolves.toMatchObject(
+        {
+          surfaceBreakdown: { paved: 50, unpaved: 25, unknown: 25 },
+        },
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps a valid route when optional surface metadata is malformed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            features: [
+              {
+                geometry: {
+                  type: 'LineString',
+                  coordinates: [
+                    [0, 0, 0],
+                    [0, 0.2, 0],
+                  ],
+                },
+                properties: {
+                  summary: { distance: 22_000 },
+                  extras: { surface: { summary: [{ value: 'future', amount: 100 }] } },
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      ),
+    )
+    try {
+      const route = await new OrsRoutingProvider('test-key').route(input, context)
+      expect(route).toMatchObject({
+        coordinates: [
+          [0, 0, 0],
+          [0, 0.2, 0],
+        ],
+      })
+      expect(route.surfaceBreakdown).toBeUndefined()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('maps a malformed successful payload to PROVIDER_RESPONSE_INVALID', async () => {
     vi.stubGlobal(
       'fetch',
