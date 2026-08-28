@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   Chart,
   Filler,
@@ -13,12 +13,17 @@ import {
 import type { ExpeditionPlan } from '@shared/contracts/expedition'
 import { toElevationChartPoints } from '@/application/elevation-chart'
 import type { UnitSystem } from '@/stores/planner'
-import { formatElevation } from '@/utils/format'
+import { formatDistance, formatElevation } from '@/utils/format'
 
 Chart.register(LinearScale, LineController, LineElement, PointElement, Tooltip, Filler)
 const props = defineProps<{ plan: ExpeditionPlan; units: UnitSystem }>()
 const canvas = ref<HTMLCanvasElement | null>(null)
 let chart: Chart | null = null
+const descriptionId = 'elevation-chart-description'
+const elevationDescription = computed(
+  () =>
+    `Elevation profile for ${formatDistance(props.plan.summary.totalDistanceMeters, props.units, 1)} route. Total ascent ${formatElevation(props.plan.summary.totalAscentMeters, props.units)} and total descent ${formatElevation(props.plan.route.descentMeters, props.units)}.`,
+)
 
 function render() {
   if (!canvas.value) return
@@ -82,5 +87,13 @@ onBeforeUnmount(() => chart?.destroy())
 </script>
 
 <template>
-  <div class="elevation-chart"><canvas ref="canvas" /></div>
+  <div class="elevation-chart">
+    <canvas
+      ref="canvas"
+      role="img"
+      aria-label="Elevation profile"
+      :aria-describedby="descriptionId"
+    />
+    <p :id="descriptionId" class="sr-only">{{ elevationDescription }}</p>
+  </div>
 </template>

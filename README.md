@@ -14,6 +14,10 @@ Live demo: https://bikepacking-expedition-planner.netlify.app
 - Paved-priority or mixed-surface route intent
 - Settlement-aware stage endpoints with a balanced route-point fallback
 - Per-stage distance, ascent, descent, and estimated riding time
+- Recommended riding-day guidance for demanding plans, using a deterministic distance/fitness heuristic and one-action replanning through the existing planner flow
+- Road-bike and mixed-surface suitability caution
+- Per-stage effort context based on distance, ascent, and selected fitness
+- Provider-backed surface breakdown when ORS surface metadata is available; otherwise the planner reports that surface data is unavailable
 - Expedition summary, feasibility warnings, and full-route elevation profile
 - Metric or Imperial display, with Metric as the default
 - IndexedDB restore of the latest successful plan
@@ -26,10 +30,11 @@ When `document.modelContext.registerTool()` is available, Waypoint registers:
 
 - `search_locations(query)`
 - `set_trip_parameters(...)`
+- `update_trip_constraints(...)`
 - `generate_expedition_plan()`
 - `get_expedition_plan()`
 
-Tool inputs are validated with the shared contracts. The read-only tools return compact canonical data rather than raw provider payloads or route-point arrays. If a live provider fails for a known curated example, a pipeline-generated cached route may be shown and is visibly marked as cached.
+Tool inputs are validated with the shared contracts. `update_trip_constraints` changes days, bike type, route profile, or fitness while retaining the selected locations; it does not regenerate a plan. Generation remains a separate explicit action. The read-only tools return compact canonical data rather than raw provider payloads or route-point arrays. If a live provider fails for a known curated example, a pipeline-generated cached route may be shown and is visibly marked as cached.
 
 ## Stack
 
@@ -40,7 +45,7 @@ Tool inputs are validated with the shared contracts. The read-only tools return 
 - Netlify Standard Functions
 - Native `fetch()` provider adapters
 
-Provider roles are deliberately narrow: openrouteservice handles cycling routing and route elevation, GraphHopper handles forward/reverse geocoding, and OpenStreetMap Overpass supplies settlement corridors.
+Provider roles are deliberately narrow: openrouteservice handles cycling routing, route elevation, and optional surface metadata, GraphHopper handles forward/reverse geocoding, and OpenStreetMap Overpass supplies settlement corridors.
 
 ## Local development
 

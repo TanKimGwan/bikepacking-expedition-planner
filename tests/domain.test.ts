@@ -5,10 +5,13 @@ import { PRESETS, type PresetId } from '@/application/presets'
 import { cachedPlanFor } from '@/server/fallback'
 import fallbackPlans from '@/server/fallback-plans.json'
 import { haversineMeters } from '@shared/domain/geo'
-import { ExpeditionInputSchema } from '@shared/contracts/expedition'
+import { ExpeditionInputSchema, TripConstraintPatchSchema } from '@shared/contracts/expedition'
 import {
   ELEVATION_RECONCILIATION_TOLERANCE_METERS,
   normalizeRoute,
+  recommendedDaysFor,
+  routeSuitabilityFor,
+  tripDraftMatchesInput,
   validatePlanningLimits,
   buildExpeditionPlan,
 } from '@shared/domain/planning'
@@ -44,6 +47,58 @@ describe('planning domain', () => {
     expect(route.points.at(-1)?.distanceFromStartMeters).toBe(route.distanceMeters)
     expect(route.ascentMeters).toBeCloseTo(100)
     expect(route.descentMeters).toBeCloseTo(50)
+  })
+
+  it('uses a finite provider distance as the canonical route total', () => {
+    const route = normalizeRoute(
+      {
+        coordinates: [
+          [0, 0, 100],
+          [0, 0.1, 200],
+          [0, 0.2, 150],
+        ],
+        distanceMeters: 999_999,
+      },
+      10_000,
+    )
+
+    expect(route.distanceMeters).toBe(999_999)
+    expect(route.points.at(-1)?.distanceFromStartMeters).toBe(999_999)
+    expect(route.elevationPoints?.at(-1)?.distanceFromStartMeters).toBe(999_999)
+    const plan = buildExpeditionPlan(input, route, [], {
+      routingProvider: 'test',
+      elevationProvider: 'test',
+      settlementProvider: 'test',
+      geocodingProvider: 'test',
+      source: 'live',
+    })
+    expect(plan.stages.reduce((total, stage) => total + stage.distanceMeters, 0)).toBeCloseTo(
+      999_999,
+      6,
+    )
+  })
+
+  it('rejects an invalid provider distance while retaining the geometry fallback only when absent', () => {
+    expect(
+      normalizeRoute({
+        coordinates: [
+          [0, 0],
+          [0, 0.2],
+        ],
+      }).distanceMeters,
+    ).toBeGreaterThan(22_000)
+
+    for (const distanceMeters of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() =>
+        normalizeRoute({
+          coordinates: [
+            [0, 0],
+            [0, 0.2],
+          ],
+          distanceMeters,
+        }),
+      ).toThrow('invalid route distance')
+    }
   })
 
   it('rejects provider elevation sentinel values', () => {
@@ -120,6 +175,152 @@ describe('planning domain', () => {
 
     expect(route.ascentMeters).toBeCloseTo(11_000)
     expect(route.descentMeters).toBe(0)
+  })
+
+  it('recommends the smallest comfortable day count within the MVP range', () => {
+    expect(recommendedDaysFor(333_000, 3, 'beginner')).toBe(5)
+    expect(recommendedDaysFor(240_000, 3, 'beginner')).toBeUndefined()
+    expect(recommendedDaysFor(240_001, 3, 'beginner')).toBe(4)
+    expect(recommendedDaysFor(360_000, 3, 'intermediate')).toBeUndefined()
+    expect(recommendedDaysFor(360_001, 3, 'intermediate')).toBe(4)
+    expect(recommendedDaysFor(480_000, 3, 'experienced')).toBeUndefined()
+    expect(recommendedDaysFor(480_001, 3, 'experienced')).toBe(4)
+    expect(recommendedDaysFor(560_000, 3, 'beginner')).toBe(7)
+    expect(recommendedDaysFor(560_001, 3, 'beginner')).toBeUndefined()
+    expect(recommendedDaysFor(600_000, 7, 'beginner')).toBeUndefined()
+    for (const distance of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(recommendedDaysFor(distance, 3, 'beginner')).toBeUndefined()
+    }
+    for (const days of [0, 1, 8, 3.5]) {
+      expect(recommendedDaysFor(333_000, days, 'beginner')).toBeUndefined()
+    }
+
+    const plan = buildExpeditionPlan(
+      { ...input, fitness: 'beginner' },
+      normalizeRoute({
+        coordinates: [
+          [0, 0, 0],
+          [0, 3, 0],
+        ],
+      }),
+      [],
+      {
+        routingProvider: 'test',
+        elevationProvider: 'test',
+        settlementProvider: 'test',
+        geocodingProvider: 'test',
+        source: 'live',
+      },
+    )
+    expect(plan.feasibility.recommendedDays).toBe(5)
+  })
+
+  it('matches a draft only when route and planning constraints are unchanged', () => {
+    const planInput: ExpeditionInput = { ...input, fitness: 'beginner' }
+    expect(tripDraftMatchesInput(planInput, planInput)).toBe(true)
+    expect(tripDraftMatchesInput({ ...planInput, fitness: 'experienced' }, planInput)).toBe(false)
+    expect(
+      tripDraftMatchesInput(
+        { ...planInput, destination: { ...planInput.destination, lng: 0.3 } },
+        planInput,
+      ),
+    ).toBe(false)
+    expect(tripDraftMatchesInput({ days: planInput.days }, planInput)).toBe(false)
+  })
+
+  it('validates trip constraint patches strictly', () => {
+    expect(TripConstraintPatchSchema.safeParse({ days: 5 }).success).toBe(true)
+    expect(
+      TripConstraintPatchSchema.safeParse({ fitness: 'beginner', routeProfile: 'mixed-surface' })
+        .success,
+    ).toBe(true)
+    for (const patch of [{}, { days: 1 }, { days: undefined }, { start: 'elsewhere' }]) {
+      expect(TripConstraintPatchSchema.safeParse(patch).success).toBe(false)
+    }
+  })
+
+  it('classifies bike and route combinations without over-warning', () => {
+    expect(routeSuitabilityFor('road', 'mixed-surface')).toMatchObject({
+      level: 'caution',
+      code: 'ROAD_BIKE_MIXED_SURFACE',
+    })
+    for (const bikeType of ['road', 'gravel', 'touring', 'mtb'] as const) {
+      for (const routeProfile of ['paved-priority', 'mixed-surface'] as const) {
+        const suitability = routeSuitabilityFor(bikeType, routeProfile)
+        expect(suitability.level).toBe(
+          bikeType === 'road' && routeProfile === 'mixed-surface' ? 'caution' : 'compatible',
+        )
+      }
+    }
+  })
+
+  it('adds distance, climbing, and tied relative effort context to stages', () => {
+    const route = normalizeRoute({
+      coordinates: [
+        [0, 0, 0],
+        [0, 0.5, 100],
+        [0, 1.2, 700],
+        [0, 2.16, 1_800],
+      ],
+    })
+    const plan = buildExpeditionPlan(
+      {
+        ...input,
+        days: 3,
+        fitness: 'beginner',
+        destination: { ...input.destination, lat: 2.16 },
+      },
+      route,
+      [
+        { id: 'town-1', label: 'Town 1', lat: 0.5, lng: 0, settlementType: 'town' },
+        { id: 'town-2', label: 'Town 2', lat: 1.2, lng: 0, settlementType: 'town' },
+      ],
+      {
+        routingProvider: 'test',
+        elevationProvider: 'test',
+        settlementProvider: 'test',
+        geocodingProvider: 'test',
+        source: 'live',
+      },
+    )
+
+    expect(plan.stages.map((stage) => stage.effort)).toEqual([
+      { distanceLevel: 'light', climbingLevel: 'low', relativeLabels: [] },
+      { distanceLevel: 'moderate', climbingLevel: 'rolling', relativeLabels: [] },
+      {
+        distanceLevel: 'demanding',
+        climbingLevel: 'climbing-heavy',
+        relativeLabels: ['longest-stage', 'most-climbing'],
+      },
+    ])
+
+    const tiedPlan = buildExpeditionPlan(
+      {
+        ...input,
+        days: 2,
+        fitness: 'experienced',
+        destination: { ...input.destination, lat: 2 },
+      },
+      normalizeRoute({
+        coordinates: [
+          [0, 0, 0],
+          [0, 1, 100],
+          [0, 2, 200],
+        ],
+      }),
+      [],
+      {
+        routingProvider: 'test',
+        elevationProvider: 'test',
+        settlementProvider: 'test',
+        geocodingProvider: 'test',
+        source: 'live',
+      },
+    )
+    expect(tiedPlan.stages.map((stage) => stage.effort?.relativeLabels)).toEqual([
+      ['longest-stage', 'most-climbing'],
+      ['longest-stage', 'most-climbing'],
+    ])
   })
 
   it('reconciles stage ascent and descent with the full elevation sequence', () => {

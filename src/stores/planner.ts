@@ -4,9 +4,11 @@ import { defineStore } from 'pinia'
 import {
   DraftExpeditionInputSchema,
   ExpeditionInputSchema,
+  TripConstraintPatchSchema,
   type CanonicalLocation,
   type DraftExpeditionInput,
   type ExpeditionPlan,
+  type TripConstraintPatch,
 } from '@shared/contracts/expedition'
 
 import { ApiError } from '@/api/client'
@@ -15,6 +17,14 @@ import { loadCurrentPlan, saveCurrentPlan } from '@/application/persistence'
 
 export type PlanningStatus = 'idle' | 'planning' | 'success' | 'error'
 export type UnitSystem = 'metric' | 'imperial'
+type TripConstraintUpdateErrorCode = 'INVALID_INPUT' | 'PLAN_IN_PROGRESS'
+export type TripConstraintUpdateResult =
+  | {
+      success: true
+      updatedFields: string[]
+      draft: DraftExpeditionInput
+    }
+  | { success: false; code: TripConstraintUpdateErrorCode; message: string }
 
 export const usePlannerStore = defineStore('planner', () => {
   const status = ref<PlanningStatus>('idle')
@@ -45,13 +55,47 @@ export const usePlannerStore = defineStore('planner', () => {
     setDraft({ [field]: location })
   }
 
+  function updateTripConstraints(input: unknown): TripConstraintUpdateResult {
+    const parsed = TripConstraintPatchSchema.safeParse(input)
+    if (!parsed.success) {
+      return {
+        success: false,
+        code: 'INVALID_INPUT',
+        message: 'Update one or more valid trip constraints.',
+      }
+    }
+    if (status.value === 'planning') {
+      return {
+        success: false,
+        code: 'PLAN_IN_PROGRESS',
+        message: 'Wait for the current plan to finish generating, then retry this update.',
+      }
+    }
+    const patch = Object.fromEntries(
+      Object.entries(parsed.data).filter(([, value]) => value !== undefined),
+    ) as TripConstraintPatch
+    draftInput.value = { ...draftInput.value, ...patch }
+    return {
+      success: true,
+      updatedFields: Object.keys(patch),
+      draft: { ...draftInput.value },
+    }
+  }
+
   function setUnits(units: UnitSystem) {
     unitSystem.value = units
     localStorage.setItem('waypoint:units', units)
   }
 
   async function restore() {
-    const savedPlan = await loadCurrentPlan()
+    let savedPlan: ExpeditionPlan | null
+    try {
+      savedPlan = await loadCurrentPlan()
+    } catch {
+      currentPlan.value = null
+      console.warn('Planner plan restore failed; starting without a saved plan.')
+      return
+    }
     if (!savedPlan) return
     const draftMatchesSavedPlan =
       draftInput.value.start?.lat === savedPlan.input.start.lat &&
@@ -88,7 +132,11 @@ export const usePlannerStore = defineStore('planner', () => {
       currentPlan.value = plan
       status.value = 'success'
       selectedStageDay.value = null
-      await saveCurrentPlan(plan)
+      try {
+        await saveCurrentPlan(plan)
+      } catch {
+        console.warn('Planner plan persistence failed; keeping the generated plan in memory.')
+      }
     } catch (caught) {
       error.value =
         caught instanceof ApiError
@@ -118,6 +166,7 @@ export const usePlannerStore = defineStore('planner', () => {
     canGenerate,
     setDraft,
     setLocation,
+    updateTripConstraints,
     setUnits,
     restore,
     generate,

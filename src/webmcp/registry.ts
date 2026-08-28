@@ -28,6 +28,8 @@ function planProjection(store: ReturnType<typeof usePlannerStore>) {
     planId: plan.id,
     input: plan.input,
     summary: plan.summary,
+    surfaceBreakdown: plan.route.surfaceBreakdown,
+    suitability: plan.suitability,
     stages: plan.stages.map((stage) => ({
       day: stage.day,
       start: stage.start.label,
@@ -35,6 +37,7 @@ function planProjection(store: ReturnType<typeof usePlannerStore>) {
       distanceMeters: stage.distanceMeters,
       ascentMeters: stage.ascentMeters,
       estimatedRidingTimeSeconds: stage.estimatedRidingTimeSeconds,
+      effort: stage.effort,
     })),
     feasibility: plan.feasibility,
     warnings: plan.warnings,
@@ -101,6 +104,31 @@ export function registerWebMcp(store: ReturnType<typeof usePlannerStore>): boole
         return toolError('INVALID_INPUT', 'Trip parameters do not match the planner contract.')
       store.setDraft(parsed.data as ExpeditionInput)
       return { status: 'success', input: parsed.data }
+    },
+  })
+  modelContext.registerTool({
+    name: 'update_trip_constraints',
+    description:
+      'Update selected days, bike, route profile, or fitness without changing start or destination. Generate separately to replan.',
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      minProperties: 1,
+      properties: {
+        days: { type: 'integer', minimum: 2, maximum: 7 },
+        bikeType: { type: 'string', enum: ['road', 'gravel', 'touring', 'mtb'] },
+        routeProfile: { type: 'string', enum: ['paved-priority', 'mixed-surface'] },
+        fitness: { type: 'string', enum: ['beginner', 'intermediate', 'experienced'] },
+      },
+    },
+    execute: async (input) => {
+      const result = store.updateTripConstraints(input)
+      if (!result.success) return toolError(result.code, result.message)
+      return {
+        status: 'success',
+        updatedFields: result.updatedFields,
+        draft: result.draft,
+      }
     },
   })
   modelContext.registerTool({

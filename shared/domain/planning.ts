@@ -1,5 +1,6 @@
 import type {
   CanonicalLocation,
+  DraftExpeditionInput,
   ExpeditionInput,
   ExpeditionPlan,
   ExpeditionStage,
@@ -8,6 +9,9 @@ import type {
   PlanWarning,
   ProviderProvenance,
   RoutePoint,
+  RouteSuitability,
+  StageEffortContext,
+  SurfaceBreakdown,
 } from '../contracts/expedition'
 import { haversineMeters, locationFromRoutePoint, pointAtDistance, sliceRoute } from './geo'
 
@@ -16,6 +20,8 @@ export const TOO_CLOSE_DISTANCE_METERS = 500
 export const SETTLEMENT_CORRIDOR_METERS = 2_000
 /** Stage elevation totals may differ from the route aggregate by at most 0.1 m. */
 export const ELEVATION_RECONCILIATION_TOLERANCE_METERS = 0.1
+export const LIGHT_STAGE_DISTANCE_RATIO = 0.75
+export const EFFORT_RELATIVE_TIE_TOLERANCE_METERS = 0.1
 const MAX_SETTLEMENT_TARGET_DEVIATION_METERS = 25_000
 const MIN_PLAUSIBLE_ELEVATION_METERS = -1_000
 const MAX_PLAUSIBLE_ELEVATION_METERS = 10_000
@@ -39,6 +45,7 @@ export type ProviderRoute = {
   distanceMeters?: number
   ascentMeters?: number
   descentMeters?: number
+  surfaceBreakdown?: SurfaceBreakdown
 }
 
 export function normalizeRoute(
@@ -52,7 +59,7 @@ export function normalizeRoute(
     )
   }
 
-  const allPoints: RoutePoint[] = []
+  const geometryPoints: RoutePoint[] = []
   let distanceFromStartMeters = 0
   for (const [index, coordinate] of providerRoute.coordinates.entries()) {
     const [lng, lat, elevationMeters] = coordinate
@@ -71,13 +78,41 @@ export function normalizeRoute(
       )
     }
     if (index > 0) {
-      const previous = allPoints[index - 1]
+      const previous = geometryPoints[index - 1]
       distanceFromStartMeters += haversineMeters([previous.lng, previous.lat], [lng, lat])
     }
-    allPoints.push({ lng, lat, elevationMeters, distanceFromStartMeters })
+    geometryPoints.push({ lng, lat, elevationMeters, distanceFromStartMeters })
   }
 
-  validateElevationPlausibility(allPoints)
+  validateElevationPlausibility(geometryPoints)
+
+  if (!Number.isFinite(distanceFromStartMeters) || distanceFromStartMeters <= 0) {
+    throw new PlanningDomainError(
+      'INVALID_INPUT',
+      'The routing provider returned a route with no measurable distance.',
+    )
+  }
+  const providerDistanceMeters = providerRoute.distanceMeters
+  if (
+    providerDistanceMeters !== undefined &&
+    (!Number.isFinite(providerDistanceMeters) || providerDistanceMeters <= 0)
+  ) {
+    throw new PlanningDomainError(
+      'INVALID_INPUT',
+      'The routing provider returned an invalid route distance.',
+    )
+  }
+  const canonicalDistanceMeters = providerDistanceMeters ?? distanceFromStartMeters
+  const allPoints =
+    providerDistanceMeters === undefined
+      ? geometryPoints
+      : geometryPoints.map((point, index) => ({
+          ...point,
+          distanceFromStartMeters:
+            index === geometryPoints.length - 1
+              ? canonicalDistanceMeters
+              : point.distanceFromStartMeters * (canonicalDistanceMeters / distanceFromStartMeters),
+        }))
 
   const sampledPoints = [allPoints[0]]
   let nextSampleDistance = sampleIntervalMeters
@@ -98,7 +133,8 @@ export function normalizeRoute(
     },
     points: sampledPoints,
     elevationPoints: allPoints,
-    distanceMeters: distanceFromStartMeters,
+    surfaceBreakdown: providerRoute.surfaceBreakdown,
+    distanceMeters: canonicalDistanceMeters,
     ascentMeters: elevationStats.hasElevation
       ? elevationStats.ascentMeters
       : (providerRoute.ascentMeters ?? 0),
@@ -226,6 +262,22 @@ function calculateElevation(points: RoutePoint[]): {
   return { hasElevation, ascentMeters, descentMeters }
 }
 
+export function routeSuitabilityFor(
+  bikeType: ExpeditionInput['bikeType'],
+  routeProfile: ExpeditionInput['routeProfile'],
+): RouteSuitability {
+  if (bikeType === 'road' && routeProfile === 'mixed-surface') {
+    return {
+      level: 'caution',
+      code: 'ROAD_BIKE_MIXED_SURFACE',
+      title: 'Road bike on mixed surface',
+      message:
+        'Check tire width and surface conditions before setting out; the route provider does not guarantee pavement.',
+    }
+  }
+  return { level: 'compatible' }
+}
+
 function validateElevationPlausibility(points: RoutePoint[]): void {
   for (let index = 0; index < points.length; index += 1) {
     const point = points[index]
@@ -288,6 +340,42 @@ const SPEEDS_KPH: Record<
   experienced: { paved: 22, mixed: 20, comfortableDailyDistance: 160_000 },
 }
 
+function withStageEffortContext(
+  stages: ExpeditionStage[],
+  fitness: FitnessLevel,
+): ExpeditionStage[] {
+  const comfortableDailyDistance = SPEEDS_KPH[fitness].comfortableDailyDistance
+  const longestDistance = Math.max(...stages.map((stage) => stage.distanceMeters))
+  const mostClimbing = Math.max(...stages.map((stage) => stage.ascentMeters))
+
+  return stages.map((stage) => {
+    const distanceRatio = stage.distanceMeters / comfortableDailyDistance
+    const climbingDensity = (stage.ascentMeters / stage.distanceMeters) * 1_000
+    const relativeLabels: StageEffortContext['relativeLabels'] = []
+    if (Math.abs(stage.distanceMeters - longestDistance) <= EFFORT_RELATIVE_TIE_TOLERANCE_METERS) {
+      relativeLabels.push('longest-stage')
+    }
+    if (Math.abs(stage.ascentMeters - mostClimbing) <= EFFORT_RELATIVE_TIE_TOLERANCE_METERS) {
+      relativeLabels.push('most-climbing')
+    }
+
+    return {
+      ...stage,
+      effort: {
+        distanceLevel:
+          distanceRatio <= LIGHT_STAGE_DISTANCE_RATIO
+            ? 'light'
+            : distanceRatio <= 1
+              ? 'moderate'
+              : 'demanding',
+        climbingLevel:
+          climbingDensity < 5 ? 'low' : climbingDensity < 10 ? 'rolling' : 'climbing-heavy',
+        relativeLabels,
+      },
+    }
+  })
+}
+
 export function estimatedRidingTimeSeconds(
   distanceMeters: number,
   fitness: FitnessLevel,
@@ -295,6 +383,48 @@ export function estimatedRidingTimeSeconds(
 ): number {
   const speedKph = SPEEDS_KPH[fitness][routeProfile === 'mixed-surface' ? 'mixed' : 'paved']
   return (distanceMeters / 1_000 / speedKph) * 3_600
+}
+
+export function tripDraftMatchesInput(
+  draft: DraftExpeditionInput,
+  input: ExpeditionInput,
+): boolean {
+  return Boolean(
+    draft.start &&
+    draft.destination &&
+    draft.start.lat === input.start.lat &&
+    draft.start.lng === input.start.lng &&
+    draft.destination.lat === input.destination.lat &&
+    draft.destination.lng === input.destination.lng &&
+    draft.days === input.days &&
+    draft.bikeType === input.bikeType &&
+    draft.routeProfile === input.routeProfile &&
+    draft.fitness === input.fitness,
+  )
+}
+
+export function recommendedDaysFor(
+  distanceMeters: number,
+  currentDays: number,
+  fitness: FitnessLevel,
+): number | undefined {
+  if (
+    !Number.isFinite(distanceMeters) ||
+    distanceMeters <= 0 ||
+    !Number.isInteger(currentDays) ||
+    currentDays < 2 ||
+    currentDays > 7
+  ) {
+    return undefined
+  }
+  const pace = SPEEDS_KPH[fitness]
+  if (!pace) return undefined
+  const comfortableDailyDistance = pace.comfortableDailyDistance
+  if (distanceMeters / currentDays <= comfortableDailyDistance) return undefined
+  for (let days = currentDays + 1; days <= 7; days += 1) {
+    if (distanceMeters / days <= comfortableDailyDistance) return days
+  }
+  return undefined
 }
 
 export function buildExpeditionPlan(
@@ -361,8 +491,12 @@ export function buildExpeditionPlan(
   }
 
   const pace = SPEEDS_KPH[input.fitness]
+  const stagesWithEffort = withStageEffortContext(stages, input.fitness)
   const averageDistanceMeters = route.distanceMeters / input.days
   const demanding = averageDistanceMeters > pace.comfortableDailyDistance
+  const recommendedDays = demanding
+    ? recommendedDaysFor(route.distanceMeters, input.days, input.fitness)
+    : undefined
   const feasibility = {
     level: demanding ? ('demanding' as const) : ('comfortable' as const),
     title: demanding ? 'A demanding daily rhythm' : 'A manageable daily rhythm',
@@ -371,6 +505,7 @@ export function buildExpeditionPlan(
       : `At ${formatKilometers(averageDistanceMeters)} per day, this plan stays within a reasonable range for a ${input.fitness} rider.`,
     averageDistanceMeters,
     recommendedDailyDistanceMeters: pace.comfortableDailyDistance,
+    recommendedDays,
   }
   if (demanding) {
     warnings.unshift({
@@ -380,13 +515,13 @@ export function buildExpeditionPlan(
       message: feasibility.message,
     })
   }
-  if (input.bikeType === 'road' && input.routeProfile === 'mixed-surface') {
+  const suitability = routeSuitabilityFor(input.bikeType, input.routeProfile)
+  if (suitability.level === 'caution') {
     warnings.push({
       code: 'ROAD_BIKE_MIXED_SURFACE',
       severity: 'warning',
-      title: 'Road bike on mixed surface',
-      message:
-        'Check tire width and surface conditions before setting out; the route provider does not guarantee pavement.',
+      title: suitability.title,
+      message: suitability.message,
     })
   }
 
@@ -395,7 +530,7 @@ export function buildExpeditionPlan(
     generatedAt: new Date().toISOString(),
     input,
     route,
-    stages,
+    stages: stagesWithEffort,
     summary: {
       totalDistanceMeters: route.distanceMeters,
       totalAscentMeters: route.ascentMeters,
@@ -407,6 +542,7 @@ export function buildExpeditionPlan(
       ),
     },
     feasibility,
+    suitability,
     warnings,
     provenance,
   }

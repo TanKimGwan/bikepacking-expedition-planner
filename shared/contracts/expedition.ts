@@ -27,6 +27,18 @@ export const ExpeditionInputSchema = z.object({
 
 export const DraftExpeditionInputSchema = ExpeditionInputSchema.partial()
 
+export const TripConstraintPatchSchema = z
+  .object({
+    days: z.number().int().min(2).max(7).optional(),
+    bikeType: BikeTypeSchema.optional(),
+    routeProfile: RouteProfileSchema.optional(),
+    fitness: FitnessLevelSchema.optional(),
+  })
+  .strict()
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'At least one trip constraint is required.',
+  })
+
 export const RouteCoordinateSchema = z.array(z.number().finite()).min(2).max(3)
 export const LineStringSchema = z.object({
   type: z.literal('LineString'),
@@ -40,10 +52,17 @@ export const RoutePointSchema = z.object({
   distanceFromStartMeters: z.number().finite().nonnegative(),
 })
 
+export const SurfaceBreakdownSchema = z.object({
+  paved: z.number().finite().min(0).max(100),
+  unpaved: z.number().finite().min(0).max(100),
+  unknown: z.number().finite().min(0).max(100),
+})
+
 export const NormalizedRouteSchema = z.object({
   geometry: LineStringSchema,
   points: z.array(RoutePointSchema).min(2),
   elevationPoints: z.array(RoutePointSchema).min(2).optional(),
+  surfaceBreakdown: SurfaceBreakdownSchema.optional(),
   distanceMeters: z.number().finite().positive(),
   ascentMeters: z.number().finite().nonnegative(),
   descentMeters: z.number().finite().nonnegative(),
@@ -57,6 +76,12 @@ export const PlanWarningSchema = z.object({
   message: z.string().min(1),
 })
 
+export const StageEffortContextSchema = z.object({
+  distanceLevel: z.enum(['light', 'moderate', 'demanding']),
+  climbingLevel: z.enum(['low', 'rolling', 'climbing-heavy']),
+  relativeLabels: z.array(z.enum(['longest-stage', 'most-climbing'])).max(2),
+})
+
 export const ExpeditionStageSchema = z.object({
   day: z.number().int().min(1),
   startDistanceMeters: z.number().finite().nonnegative(),
@@ -68,7 +93,18 @@ export const ExpeditionStageSchema = z.object({
   start: CanonicalLocationSchema,
   end: CanonicalLocationSchema,
   estimatedRidingTimeSeconds: z.number().finite().positive(),
+  effort: StageEffortContextSchema.optional(),
 })
+
+export const RouteSuitabilitySchema = z.discriminatedUnion('level', [
+  z.object({ level: z.literal('compatible') }),
+  z.object({
+    level: z.literal('caution'),
+    code: z.literal('ROAD_BIKE_MIXED_SURFACE'),
+    title: z.string().min(1),
+    message: z.string().min(1),
+  }),
+])
 
 export const FeasibilityResultSchema = z.object({
   level: z.enum(['comfortable', 'demanding']),
@@ -76,6 +112,7 @@ export const FeasibilityResultSchema = z.object({
   message: z.string().min(1),
   averageDistanceMeters: z.number().finite().positive(),
   recommendedDailyDistanceMeters: z.number().finite().positive(),
+  recommendedDays: z.number().int().min(2).max(7).optional(),
 })
 
 export const ExpeditionSummarySchema = z.object({
@@ -102,6 +139,7 @@ export const ExpeditionPlanSchema = z.object({
   stages: z.array(ExpeditionStageSchema).min(2),
   summary: ExpeditionSummarySchema,
   feasibility: FeasibilityResultSchema,
+  suitability: RouteSuitabilitySchema.optional(),
   warnings: z.array(PlanWarningSchema),
   provenance: ProviderProvenanceSchema,
 })
@@ -119,11 +157,15 @@ export type FitnessLevel = z.infer<typeof FitnessLevelSchema>
 export type CanonicalLocation = z.infer<typeof CanonicalLocationSchema>
 export type ExpeditionInput = z.infer<typeof ExpeditionInputSchema>
 export type DraftExpeditionInput = z.infer<typeof DraftExpeditionInputSchema>
+export type TripConstraintPatch = z.infer<typeof TripConstraintPatchSchema>
 export type RoutePoint = z.infer<typeof RoutePointSchema>
+export type SurfaceBreakdown = z.infer<typeof SurfaceBreakdownSchema>
 export type LineString = z.infer<typeof LineStringSchema>
 export type NormalizedRoute = z.infer<typeof NormalizedRouteSchema>
 export type PlanWarning = z.infer<typeof PlanWarningSchema>
+export type StageEffortContext = z.infer<typeof StageEffortContextSchema>
 export type ExpeditionStage = z.infer<typeof ExpeditionStageSchema>
+export type RouteSuitability = z.infer<typeof RouteSuitabilitySchema>
 export type FeasibilityResult = z.infer<typeof FeasibilityResultSchema>
 export type ExpeditionSummary = z.infer<typeof ExpeditionSummarySchema>
 export type ProviderProvenance = z.infer<typeof ProviderProvenanceSchema>

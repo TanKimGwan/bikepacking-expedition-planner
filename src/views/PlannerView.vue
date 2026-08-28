@@ -13,6 +13,7 @@ import RouteMap from '@/components/RouteMap.vue'
 import StageCard from '@/components/StageCard.vue'
 import { usePlannerStore } from '@/stores/planner'
 import { formatDistance, formatDuration, formatElevation } from '@/utils/format'
+import { routeSuitabilityFor, tripDraftMatchesInput } from '@shared/domain/planning'
 import '@/planner.css'
 
 const route = useRoute()
@@ -27,6 +28,23 @@ const routeProfileLabel = computed(() =>
     ? 'Mixed surface'
     : 'Paved priority',
 )
+const recommendedDays = computed(() => planner.currentPlan?.feasibility.recommendedDays)
+const recommendedAverageDistanceMeters = computed(() => {
+  const plan = planner.currentPlan
+  const days = plan?.feasibility.recommendedDays
+  return plan && days ? plan.summary.totalDistanceMeters / days : null
+})
+const recommendationIsCurrent = computed(() => {
+  const plan = planner.currentPlan
+  return Boolean(plan && tripDraftMatchesInput(planner.draftInput, plan.input))
+})
+const draftSuitabilityCaution = computed(() => {
+  const bikeType = planner.draftInput.bikeType
+  const routeProfile = planner.draftInput.routeProfile
+  if (!bikeType || !routeProfile) return null
+  const suitability = routeSuitabilityFor(bikeType, routeProfile)
+  return suitability.level === 'caution' ? suitability : null
+})
 const displayedStart = computed(() => planner.currentPlan?.input.start ?? planner.draftInput.start)
 const displayedDestination = computed(
   () => planner.currentPlan?.input.destination ?? planner.draftInput.destination,
@@ -47,6 +65,13 @@ function applyPreset() {
 
 function setUnits(value: 'metric' | 'imperial') {
   planner.setUnits(value)
+}
+
+async function useRecommendedDays() {
+  const days = recommendedDays.value
+  if (!days || !recommendationIsCurrent.value || planner.status === 'planning') return
+  const updated = planner.updateTripConstraints({ days })
+  if (updated.success) await planner.generate()
 }
 
 async function pickLocation(lat: number, lng: number) {
@@ -210,6 +235,13 @@ async function copyPlanId() {
                   </select>
                 </div>
               </div>
+              <div v-if="draftSuitabilityCaution" class="suitability-note" role="note">
+                <span aria-hidden="true">!</span>
+                <div>
+                  <strong>{{ draftSuitabilityCaution.title }}</strong>
+                  <span>{{ draftSuitabilityCaution.message }}</span>
+                </div>
+              </div>
             </div>
           </Transition>
           <button
@@ -351,6 +383,23 @@ async function copyPlanId() {
           ><small>Stops not included</small>
         </div>
       </div>
+      <div class="terrain-summary">
+        <div class="surface-summary" data-testid="surface-summary">
+          <span class="summary-label">SURFACE BREAKDOWN</span>
+          <template v-if="planner.currentPlan.route.surfaceBreakdown">
+            <strong>
+              {{ planner.currentPlan.route.surfaceBreakdown.paved.toFixed(1) }}% paved ·
+              {{ planner.currentPlan.route.surfaceBreakdown.unpaved.toFixed(1) }}% unpaved ·
+              {{ planner.currentPlan.route.surfaceBreakdown.unknown.toFixed(1) }}% unknown
+            </strong>
+            <small>Reported by the route provider</small>
+          </template>
+          <template v-else>
+            <strong>Surface data unavailable</strong>
+            <small>This route did not include provider surface metadata.</small>
+          </template>
+        </div>
+      </div>
       <div
         class="feasibility-banner"
         :class="`feasibility-banner--${planner.currentPlan.feasibility.level}`"
@@ -361,6 +410,29 @@ async function copyPlanId() {
         <div>
           <strong>{{ planner.currentPlan.feasibility.title }}</strong
           ><span>{{ planner.currentPlan.feasibility.message }}</span>
+        </div>
+        <div
+          v-if="recommendedDays"
+          class="feasibility-recommendation"
+          :class="{ 'feasibility-recommendation--stale': !recommendationIsCurrent }"
+        >
+          <div>
+            <strong>Consider {{ recommendedDays }} days</strong>
+            <span v-if="recommendationIsCurrent"
+              >That would be about
+              {{ formatDistance(recommendedAverageDistanceMeters ?? 0, planner.unitSystem, 1) }} per
+              day.</span
+            >
+            <span v-else>Trip settings changed. Regenerate to refresh this recommendation.</span>
+          </div>
+          <button
+            class="button button--outline recommendation-action"
+            type="button"
+            :disabled="planner.status === 'planning' || !recommendationIsCurrent"
+            @click="useRecommendedDays"
+          >
+            {{ planner.status === 'planning' ? 'Replanning…' : `Use ${recommendedDays} days` }}
+          </button>
         </div>
         <small>Riding time excludes meal stops, long rests, photos, and mechanical issues.</small>
       </div>

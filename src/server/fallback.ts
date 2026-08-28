@@ -50,6 +50,7 @@ export function cachedPlanFor(input: ExpeditionInput): ExpeditionPlan | null {
       coordinates: template.route.geometry.coordinates,
       ascentMeters: template.route.ascentMeters,
       descentMeters: template.route.descentMeters,
+      surfaceBreakdown: template.route.surfaceBreakdown,
     })
     const replanned = buildExpeditionPlan(
       input,
